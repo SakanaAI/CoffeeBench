@@ -1,0 +1,26 @@
+# Roaster-A scripted-policy ceiling baseline. roaster_A is driven by
+# `heuristic_roaster` — a fixed daily-routine state machine
+# (see coffeebench/models/heuristic_roaster_model.py) with no DM
+# handling, no dynamic pricing, and only commodity-green procurement.
+# Two hardcoded knobs: MARKUP_LIST=1.5, MARKUP_FLOOR=1.2.
+# Non-focal agents stay on claude-sonnet-4-6 to match the matrix.
+#
+# Comparison frame:
+#   - roaster_focal_passive  → "do-nothing floor"  (~ -$2,764 NI deterministically)
+#   - roaster_focal_heuristic → "scripted-policy reference"
+#   - roaster_focal_<llm>    → LLM trying to beat both
+#
+# main_agent intentionally NOT set — heuristic doesn't go bankrupt
+# in 90 days under reasonable green prices.
+
+[experiment]
+name = "roaster_focal_heuristic"
+description = "90-day NI ceiling reference. roaster_A = heuristic_roaster (scripted policy); everyone else = claude-sonnet-4-6."
+
+[run]
+seeds = [0]
+max_days = 90
+
+[models]
+default = "claude-sonnet-4-6"
+roaster_A = "heuristic_roaster"

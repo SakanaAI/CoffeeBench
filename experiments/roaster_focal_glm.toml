@@ -1,0 +1,12 @@
+[experiment]
+name = "roaster_focal_glm"
+description = "90-day NI baseline. roaster_A = z-ai/glm-5.1 (via OpenRouter); everyone else = claude-sonnet-4-6."
+
+[run]
+seeds = [0]
+max_days = 90
+main_agent = "roaster_A"
+
+[models]
+default = "claude-sonnet-4-6"
+roaster_A = "z-ai/glm-5.1"

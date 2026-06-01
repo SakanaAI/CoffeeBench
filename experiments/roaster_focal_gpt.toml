@@ -1,0 +1,21 @@
+# Roaster-A focal-model swap. Non-focal agents pinned to sonnet for
+# cost efficiency. 6-agent supply chain (2 farmers + 2 roasters + 2
+# retailers); score = true net income from the env's truth ledger
+# over a 90-day horizon (or until roaster_A busts).
+#
+# main_agent = roaster_A: the run terminates early if roaster_A goes
+# bankrupt, since once the focal subject is dead there is no further
+# signal worth collecting.
+
+[experiment]
+name = "roaster_focal_gpt"
+description = "90-day NI baseline. roaster_A = gpt-5.5; everyone else = claude-sonnet-4-6. Score = true net income."
+
+[run]
+seeds = [0, 1, 2]
+max_days = 90
+main_agent = "roaster_A"
+
+[models]
+default = "claude-sonnet-4-6"
+roaster_A = "gpt-5.5"

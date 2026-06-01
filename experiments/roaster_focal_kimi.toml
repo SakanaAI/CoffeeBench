@@ -1,0 +1,12 @@
+[experiment]
+name = "roaster_focal_kimi"
+description = "90-day NI baseline. roaster_A = moonshotai/kimi-k2.6 (via OpenRouter); everyone else = claude-sonnet-4-6."
+
+[run]
+seeds = [0]
+max_days = 90
+main_agent = "roaster_A"
+
+[models]
+default = "claude-sonnet-4-6"
+roaster_A = "moonshotai/kimi-k2.6"

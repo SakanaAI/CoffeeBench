@@ -1,0 +1,21 @@
+# Roaster-A do-nothing baseline. roaster_A is driven by the
+# null-provider `passive` model (always wait_for_next_day, $0 API
+# cost); non-focal agents stay on claude-sonnet-4-6 to match the rest
+# of the focal_* matrix. The leaderboard score from this run is the
+# floor reference: any focal model that scores below it is actively
+# destroying value, not merely failing to add value.
+#
+# main_agent intentionally NOT set — passive can't go bankrupt in
+# 90 days at $30/day opex, so an early-stop trigger would never fire.
+
+[experiment]
+name = "roaster_focal_passive"
+description = "90-day NI floor. roaster_A = passive (do-nothing baseline); everyone else = claude-sonnet-4-6."
+
+[run]
+seeds = [0, 1, 2]
+max_days = 90
+
+[models]
+default = "claude-sonnet-4-6"
+roaster_A = "passive"
