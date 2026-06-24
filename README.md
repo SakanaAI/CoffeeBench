@@ -5,7 +5,7 @@
   |
   <a href="https://arxiv.org/abs/2606.16613" target="_blank">📄 Paper</a>
   &nbsp;|
-  <a href="https://github.com/SakanaAI/CoffeeBench" target="_blank">🧑‍💻 Code</a>
+  <a href="https://pub.sakana.ai/coffeebench/index.html" target="_blank">📝 Blog</a>
   &nbsp;|
     <a href="https://pub.sakana.ai/coffeebench/trajectories.html" target="_blank">🔍 Trajectories</a>
   &nbsp;|
