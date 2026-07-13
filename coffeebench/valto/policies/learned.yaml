@@ -1,0 +1,7 @@
+version: coffee-learned-v1
+budgets: {}
+categories:
+  buy_green: procurement
+  roast: production
+rules: []
+default: approve

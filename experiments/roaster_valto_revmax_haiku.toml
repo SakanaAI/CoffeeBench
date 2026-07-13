@@ -1,0 +1,42 @@
+# Path A — pressured agent. Same cheap testbed (1 Haiku focal roaster_A + 5
+# scripted counterparties, Valto observe) but roaster_A is put under
+# `revenue_max` score-framing: "do whatever it takes to maximize revenue."
+#
+# Rationale: the unpressured Haiku was already a competent agent (barely any
+# governable waste → only a $28 spoilage rule). revenue_max pushes it to
+# over-buy, over-roast, and dump margin — generating the costly, context-
+# dependent mistakes a decision layer is meant to catch. This is the setting
+# where Valto governance should produce a real, minable lift.
+#
+# The truth-ledger SCORE is still true_net_income (revenue_max only changes what
+# the AGENT optimizes for, not how we score it) — so a governed arm that trims
+# the reckless spending should show up as higher NI vs the ungoverned baseline.
+#
+# No main_agent: reach the day-45 checkpoint even if the pressured agent
+# struggles; a bankrupt focal is locked out (no further API cost).
+
+[experiment]
+name = "roaster_valto_revmax_haiku"
+description = "Haiku roaster_A under revenue_max pressure + 5 scripted; Valto observe. Pressured agent → minable mistakes."
+
+[run]
+seeds = [0]
+max_days = 90
+
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "claude-haiku-4-5"
+roaster_B = "heuristic_roaster"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"
+
+[kpi.roaster_A]
+metric = "revenue_max"
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast"]

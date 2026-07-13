@@ -12,6 +12,10 @@ dependencies = [
     "matplotlib>=3.10.8",
     "openai-agents>=0.4.2",
     "pandas>=2.3.3",
+    # Valto decision engine, installed EDITABLE from the sibling local checkout
+    # (see [tool.uv.sources]) — we modify Valto core for rich outcome-metrics
+    # logging, so we must build from source, not PyPI.
+    "valto",
 ]
 
 [dependency-groups]
@@ -20,6 +24,11 @@ dev = [
     "ruff>=0.14.3",
     "streamlit>=1.56.0",
 ]
+
+[tool.uv.sources]
+# Sibling checkout at ../valto. Editable so local Valto edits take effect
+# without reinstalling.
+valto = { path = "../valto", editable = true }
 
 
 [build-system]

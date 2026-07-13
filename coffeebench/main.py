@@ -526,7 +526,86 @@ def parse_args():
         "To drive an agent with the do-nothing baseline, route it through "
         "the model map: --models 'roaster_A:passive'.",
     )
+    # ---- checkpoint / resume / branch flags ----
+    p.add_argument(
+        "--checkpoint-at-day",
+        type=int,
+        default=None,
+        help="Run until the START of this day (days 0..N-1 complete, day N "
+        "morning not yet started), save a checkpoint, and exit. Requires "
+        "--checkpoint-out.",
+    )
+    p.add_argument(
+        "--checkpoint-out",
+        type=str,
+        default=None,
+        help="Path to write the checkpoint produced by --checkpoint-at-day.",
+    )
+    p.add_argument(
+        "--resume-from",
+        type=str,
+        default=None,
+        help="Resume (or branch) from a checkpoint written earlier. Combine "
+        "with --models to override selected agents' models and --branch-name "
+        "to label the continuation.",
+    )
+    p.add_argument(
+        "--branch-name",
+        type=str,
+        default=None,
+        help="Label for a resumed continuation (recorded in run_meta + events).",
+    )
     return p.parse_args()
+
+
+def _usage_summary(env) -> dict:
+    """Aggregate per-agent model usage, separating LOCAL scripted invocations
+    (zero external cost) from EXTERNAL provider API calls."""
+    from coffeebench.models import is_scripted_model
+
+    ext_calls = ext_in = ext_out = 0
+    ext_cost = 0.0
+    local_calls = 0
+    per_agent = {}
+    for aid, agent in env.agents.items():
+        model = getattr(agent, "model", None)
+        name = getattr(model, "model", None)
+        n = int(getattr(model, "n_calls", 0) or 0)
+        cost = float(getattr(model, "cost", 0.0) or 0.0)
+        tin = int(getattr(model, "total_input_tokens", 0) or 0)
+        tout = int(getattr(model, "total_output_tokens", 0) or 0)
+        scripted = name is not None and is_scripted_model(name)
+        per_agent[aid] = {"model": name, "n_calls": n, "scripted": scripted}
+        if scripted:
+            local_calls += n
+        else:
+            ext_calls += n
+            ext_cost += cost
+            ext_in += tin
+            ext_out += tout
+    return {
+        "external_api_calls": ext_calls,
+        "external_input_tokens": ext_in,
+        "external_output_tokens": ext_out,
+        "external_model_cost": round(ext_cost, 6),
+        "local_scripted_invocations": local_calls,
+        "per_agent": per_agent,
+    }
+
+
+def print_usage_summary(env) -> dict:
+    s = _usage_summary(env)
+    print("[usage] " + "=" * 60)
+    print(f"[usage] total external API calls: {s['external_api_calls']}")
+    print(f"[usage] total input tokens: {s['external_input_tokens']}")
+    print(f"[usage] total output tokens: {s['external_output_tokens']}")
+    print(f"[usage] total model cost: ${s['external_model_cost']}")
+    print(
+        f"[usage] (local scripted model invocations: "
+        f"{s['local_scripted_invocations']} — no external API cost)"
+    )
+    print("[usage] " + "=" * 60)
+    return s
 
 
 # Tools shared by every agent. Role-specific extras are appended below.
@@ -595,6 +674,7 @@ INITIAL_OBSERVATION = (
 def build_run(
     args,
     human_agents: Optional[dict[str, tuple[queue.Queue, queue.Queue]]] = None,
+    valto_override: Optional[dict] = None,
 ) -> tuple[Environment, str, str]:
     """Wire up the marketplace, business apps, agents, and Environment.
 
@@ -605,6 +685,11 @@ def build_run(
     human_agents: optional `{agent_id: (in_queue, out_queue)}`. Those agents
         get a `HumanAgent` instance routed through the queues; everyone else
         is a normal LLM `Agent` driven by the resolved per-agent model map.
+    valto_override: explicit Valto governance spec that WINS over any
+        `[valto]` block in the config. Used on resume/branching so a fork can
+        govern (or ungovern) the focal agent independently of the checkpoint's
+        original run. `{}` or `{"enabled": False}` forces Valto OFF for this
+        branch; None falls back to `config.valto`.
 
     Returns (env, output_path, events_path).
     """
@@ -651,12 +736,26 @@ def build_run(
     kpi_map: dict[str, dict] = dict(config.kpi) if config is not None else {}
 
     items, endowments = _seed_world()
-    # Apply per-item retail_reservation_price override if economy.p_res set.
-    if config is not None and "p_res" in config.economy:
-        new_p_res = float(config.economy["p_res"])
+    # Retail reservation-price overrides (the consumer willingness-to-pay ceiling
+    # that sets margin cushion + demand elasticity). Precedence: per-item keys
+    # win over the global `p_res`.
+    #   p_res            → sets ALL consumer-facing items uniformly
+    #   p_res_commodity  → roasted_coffee_kg only  (thin/elastic commodity margins)
+    #   p_res_specialty  → roasted_specialty_kg only (keep the premium tier viable)
+    if config is not None and config.economy:
+        econ = config.economy
+        per_item = {
+            "roasted_coffee_kg": econ.get("p_res_commodity"),
+            "roasted_specialty_kg": econ.get("p_res_specialty"),
+        }
+        global_pres = econ.get("p_res")
         for it in items:
-            if it.retail_reservation_price is not None:
-                it.retail_reservation_price = new_p_res
+            if it.retail_reservation_price is None:
+                continue
+            if per_item.get(it.id) is not None:
+                it.retail_reservation_price = float(per_item[it.id])
+            elif global_pres is not None:
+                it.retail_reservation_price = float(global_pres)
     time_manager = TimeManager()
     marketplace = Marketplace(time_manager=time_manager)
     for it in items:
@@ -673,6 +772,42 @@ def build_run(
     participants_str = _format_participants(endowments)
     catalog_str = _format_catalog(items)
 
+    # ---- optional Valto governance on the focal agent ----
+    # Build ONE embedded Valto client (governs a single actor). In observe mode
+    # it approves everything and just logs; in governed mode it enforces a
+    # policy. The client is created here so the focal agent's tools can be
+    # wrapped BEFORE `_collect_tools` registers them. Kept off unless a
+    # `[valto]` config block sets enabled=true — existing runs are unaffected.
+    # Precedence: explicit valto_override (resume/branch) > config [valto].
+    if valto_override is not None:
+        valto_cfg = dict(valto_override)
+    else:
+        valto_cfg = dict(config.valto) if config is not None else {}
+    valto_client = None
+    valto_actor = None
+    valto_db_path = None
+    if valto_cfg.get("enabled"):
+        from coffeebench.valto import OBSERVE_POLICY, make_valto
+
+        valto_actor = valto_cfg.get("actor")
+        mode = str(valto_cfg.get("mode", "observe"))
+        policy = valto_cfg.get("policy") or OBSERVE_POLICY
+        seed_for_db = seed if seed is not None else 0
+        db_path = valto_cfg.get("db_path")
+        if not db_path and config is not None:
+            db_path = str(
+                config.output_dir_for_seed(seed_for_db) / "valto_ledger.db"
+            )
+        valto_db_path = db_path
+        valto_client = make_valto(
+            actor=valto_actor, mode=mode, policy=policy, db_path=db_path
+        )
+        print(
+            f"[main] Valto ENABLED on {valto_actor} (mode={mode}, "
+            f"tools={valto_cfg.get('govern_tools', ['make_offer', 'roast'])}, "
+            f"ledger={db_path})"
+        )
+
     for endow in endowments:
         ba = BusinessApp(
             agent_id=endow.agent_id,
@@ -681,6 +816,15 @@ def build_run(
             time_manager=time_manager,
         )
         business_apps[endow.agent_id] = ba
+
+        # Wrap the focal agent's capital-committing tools with Valto BEFORE
+        # collecting tools, so the agent registers the governed versions.
+        if valto_client is not None and endow.agent_id == valto_actor:
+            from coffeebench.valto import govern_business_app
+
+            govern_tools = valto_cfg.get("govern_tools", ["make_offer", "roast"])
+            wrapped = govern_business_app(valto_client, ba, govern_tools)
+            print(f"[main] {endow.agent_id} → Valto-governed tools: {wrapped}")
 
         tools = _collect_tools(ba)
         for t in tools:
@@ -724,7 +868,9 @@ def build_run(
             # Scripted-policy models (passive / heuristic_*) never call
             # an API and their transcripts stay tiny, so skip the
             # ContextCompactor — it would never fire.
-            scripted = model_id in ("passive", "heuristic_roaster")
+            from coffeebench.models import is_scripted_model
+
+            scripted = is_scripted_model(model_id)
             compactor = (
                 None
                 if scripted
@@ -743,10 +889,10 @@ def build_run(
                     f"[main] {endow.agent_id} → PASSIVE baseline "
                     f"(always wait_for_next_day; $0 API cost)."
                 )
-            elif model_id == "heuristic_roaster":
+            elif scripted:
                 print(
-                    f"[main] {endow.agent_id} → HEURISTIC_ROASTER baseline "
-                    f"(scripted policy; $0 API cost)."
+                    f"[main] {endow.agent_id} → {model_id.upper()} "
+                    f"(deterministic scripted policy; $0 API cost)."
                 )
         agents[endow.agent_id] = agent
 
@@ -812,17 +958,125 @@ def build_run(
     )
     if seed is not None:
         env.rng.seed(seed)
+
+    # Expose the Valto client (or None) so post-run analysis / attribution and
+    # a future outcome-labeling pass can reach the ledger. NOT serialized into
+    # checkpoints — each branch builds its own client (no shared Valto state).
+    env._valto = valto_client
+    env._valto_actor = valto_actor
+    env._valto_db_path = valto_db_path
+
+    # Run-identity metadata carried into any checkpoint saved from this run, so
+    # a resume can rebuild the same world (config/economy/models) and record
+    # branch lineage. Kept minimal + JSON-safe.
+    env._run_meta = {
+        "coffeebench_version": "0.1.0",
+        "config_source": (config.source_path if config is not None else None),
+        "config_name": (config.name if config is not None else None),
+        "seed": seed,
+        "max_days": max_days,
+        "model_map": dict(model_map),
+        "main_agent": main_agent_id,
+        "economy": (dict(config.economy) if config is not None else {}),
+        "kpi": (dict(config.kpi) if config is not None else {}),
+    }
     return env, output_path, events_path
+
+
+def _run_valto_labeling(env) -> None:
+    """If this run had Valto governance, attribute realized outcomes to every
+    decision (writes utility + metrics back to the ledger). Best-effort — a
+    labeling bug must never fail an otherwise-complete run."""
+    if getattr(env, "_valto", None) is None:
+        return
+    try:
+        from coffeebench.valto.labeling import label_run
+
+        label_run(env)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[main] WARN: Valto labeling pass failed: {exc}")
+    # Export the labeled ledger as flat raw data (CSV + JSONL) for offline
+    # analysis, next to the ledger db.
+    try:
+        from coffeebench.valto.export import export_ledger
+
+        db_path = getattr(env, "_valto_db_path", None)
+        if db_path and os.path.exists(db_path):
+            stem = os.path.join(os.path.dirname(db_path), "valto_decisions")
+            export_ledger(db_path, stem)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[main] WARN: Valto export failed: {exc}")
+
+
+def _resolve_models_override(models_arg: str | None) -> dict:
+    out: dict[str, str] = {}
+    if not models_arg:
+        return out
+    for kv in models_arg.split(","):
+        if not kv:
+            continue
+        k, v = kv.split(":", 1)
+        out[k.strip()] = v.strip()
+    return out
 
 
 def main():
     import asyncio
 
     args = parse_args()
+
+    # ---- RESUME / BRANCH from a checkpoint ----
+    if getattr(args, "resume_from", None):
+        from coffeebench.checkpoint import load_checkpoint
+
+        output_path = args.output or "trajectories/resumed.json"
+        # Branch-specific event stream so concurrent branches don't collide.
+        if output_path.endswith(".json"):
+            events_path = output_path[:-5] + ".events.jsonl"
+        else:
+            events_path = output_path + ".events.jsonl"
+        env = load_checkpoint(
+            args.resume_from,
+            model_overrides=_resolve_models_override(args.models),
+            branch_name=getattr(args, "branch_name", None),
+            events_path=events_path,
+        )
+        try:
+            asyncio.run(env.run())
+        except BaseException as exc:
+            import traceback
+
+            print(f"\n!!! resumed env.run() crashed: {type(exc).__name__}: {exc}")
+            try:
+                env.save_trajectory(output_path)
+            except Exception as save_exc:
+                print(f"  partial save failed: {save_exc}")
+            traceback.print_exc()
+            raise
+        else:
+            env.save_trajectory(output_path)
+            _run_valto_labeling(env)
+            print_usage_summary(env)
+        return
+
+    # ---- NORMAL run (optionally saving a checkpoint mid-run) ----
     env, output_path, _ = build_run(args)
 
+    checkpoint_at_day = getattr(args, "checkpoint_at_day", None)
+    if checkpoint_at_day is not None:
+        checkpoint_out = getattr(args, "checkpoint_out", None)
+        if not checkpoint_out:
+            raise SystemExit("--checkpoint-at-day requires --checkpoint-out")
+        if not (1 <= checkpoint_at_day < env.max_days):
+            raise SystemExit(
+                f"--checkpoint-at-day must be in [1, {env.max_days - 1}], "
+                f"got {checkpoint_at_day}"
+            )
+        env._checkpoint_at_day = checkpoint_at_day
+        env._checkpoint_out = checkpoint_out
+
     try:
-        asyncio.run(env.run())
+        result = asyncio.run(env.run())
     except BaseException as exc:
         import traceback
 
@@ -834,7 +1088,17 @@ def main():
         traceback.print_exc()
         raise
     else:
-        env.save_trajectory(output_path)
+        # If we stopped to write a checkpoint, don't emit a (partial) trajectory
+        # — the checkpoint is the artifact.
+        if isinstance(result, dict) and result.get("checkpoint_saved_at_day") is not None:
+            print(
+                f"[main] Stopped and checkpointed at beginning of day "
+                f"{result['checkpoint_saved_at_day']} → {env._checkpoint_out}"
+            )
+        else:
+            env.save_trajectory(output_path)
+            _run_valto_labeling(env)
+        print_usage_summary(env)
 
 
 if __name__ == "__main__":

@@ -231,6 +231,50 @@ class EventLoop:
     def peek_time(self) -> int | None:
         return self._heap[0][0] if self._heap else None
 
+    def peek(self) -> Event | None:
+        """Return the next event to pop WITHOUT removing it (or None when
+        empty). Used by the checkpoint machinery to detect the exact
+        beginning-of-day boundary (next event is MORNING_OPEN for day N)."""
+        return self._heap[0][2] if self._heap else None
+
+    # -- checkpoint serialization -----------------------------------------
+
+    def get_state(self) -> dict:
+        """JSON-serializable snapshot of the full queue. Preserves each
+        event's `(virtual_min, counter)` sort key so a restored heap pops
+        events in exactly the same order as the original."""
+        return {
+            "current_min": int(self.current_min),
+            "counter": int(self._counter),
+            "events": [
+                {
+                    "virtual_min": int(vm),
+                    "counter": int(counter),
+                    "kind": ev.kind,
+                    "target_agent": ev.target_agent,
+                    "payload": dict(ev.payload or {}),
+                }
+                for (vm, counter, ev) in self._heap
+            ],
+        }
+
+    def restore_state(self, state: dict) -> None:
+        """Rebuild the heap from `get_state()` output. Re-heapifies the
+        stored `(virtual_min, counter, Event)` tuples so pop order is
+        identical to the pre-checkpoint queue."""
+        self.current_min = int(state.get("current_min", 0))
+        self._counter = int(state.get("counter", 0))
+        self._heap = []
+        for rec in state.get("events", []):
+            ev = Event(
+                virtual_min=int(rec["virtual_min"]),
+                kind=str(rec["kind"]),
+                target_agent=rec.get("target_agent"),
+                payload=dict(rec.get("payload") or {}),
+            )
+            self._heap.append((int(rec["virtual_min"]), int(rec["counter"]), ev))
+        heapq.heapify(self._heap)
+
     def __len__(self) -> int:
         return len(self._heap)
 

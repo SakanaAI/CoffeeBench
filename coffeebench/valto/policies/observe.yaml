@@ -1,0 +1,11 @@
+# Observe mode: approve EVERYTHING, log every decision + outcome.
+# Behaviorally identical to an ungoverned run — it just records the training
+# ledger (rich decision context + structured outcome metrics) that a policy is
+# later mined from. This is the analog of benchmark-taskmarket's observe==baseline.
+version: observe-v1
+budgets: {}
+categories:
+  buy_green: procurement
+  roast: production
+rules: []
+default: approve

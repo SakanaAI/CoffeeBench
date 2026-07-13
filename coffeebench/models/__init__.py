@@ -12,6 +12,26 @@ class Model:
         pass
 
 
+# Scripted, zero-external-cost models. These never call a provider API, need no
+# keys, and consume no provider tokens — their `query()` is a local, in-process
+# invocation. Kept as a named set so the harness can (a) skip the ContextCompactor
+# for them and (b) separate LOCAL scripted invocations from EXTERNAL API calls in
+# usage reporting. See `coffeebench/models/scripted.py`.
+SCRIPTED_MODEL_NAMES: frozenset[str] = frozenset(
+    {
+        "passive",
+        "heuristic_farmer",
+        "heuristic_roaster",
+        "heuristic_retailer",
+    }
+)
+
+
+def is_scripted_model(model: str) -> bool:
+    """True for models that run locally with zero external API cost."""
+    return model in SCRIPTED_MODEL_NAMES
+
+
 def get_model(model: str) -> Model:
     # Across all providers, **extended thinking is ON by default**:
     #   - plain `<model>`             → thinking on
@@ -23,12 +43,20 @@ def get_model(model: str) -> Model:
         from coffeebench.models.passive_model import PassiveModel
 
         return PassiveModel()
-    if model == "heuristic_roaster":
-        # Scripted state-machine baseline for the roaster role. $0 API cost.
-        # Use as `--models 'roaster_A:heuristic_roaster'`.
-        from coffeebench.models.heuristic_roaster_model import HeuristicRoasterModel
+    if model in ("heuristic_farmer", "heuristic_roaster", "heuristic_retailer"):
+        # Deterministic scripted role policies for the zero-LLM active economy.
+        # Both agents of a role share the same policy class. $0 API cost.
+        from coffeebench.models.scripted import (
+            HeuristicFarmerModel,
+            HeuristicRetailerModel,
+            HeuristicRoasterModel,
+        )
 
-        return HeuristicRoasterModel()
+        return {
+            "heuristic_farmer": HeuristicFarmerModel,
+            "heuristic_roaster": HeuristicRoasterModel,
+            "heuristic_retailer": HeuristicRetailerModel,
+        }[model]()
     if model.startswith("gpt-"):
         from coffeebench.models.openai_model import OpenAIModel
 

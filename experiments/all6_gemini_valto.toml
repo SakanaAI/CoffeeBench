@@ -1,0 +1,27 @@
+# All six agents on Gemini 3.1 Flash-Lite — a fully-live multi-agent economy at
+# the cheapest working Gemini tier (~4x cheaper than Haiku 4.5).
+#
+# NOTE: gemini-2.5-flash-lite (the $0.10/$0.40 tier) is retired for new API
+# accounts (404), and gemini-2.0-flash-lite returned 429 (no quota on this key),
+# so gemini-3.1-flash-lite ($0.25 in / $1.50 out) is the cheapest usable option
+# — and it's newer / more capable anyway. Watch for 429 rate-limit throttling on
+# a low-tier key (6 agents dispatch in parallel each morning).
+#
+# Valto observes/logs roaster_A's full decision surface (buy/produce/list/sell).
+
+[experiment]
+name = "all6_gemini_valto"
+description = "All 6 agents on Gemini 3.1 Flash-Lite (live multi-agent economy); Valto observe on roaster_A over buy/produce/list/sell."
+
+[run]
+seeds = [0]
+max_days = 90
+
+[models]
+default = "gemini-3.1-flash-lite"
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast", "post_listing", "accept_offer"]

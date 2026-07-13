@@ -1,0 +1,231 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Where Valto Can Win",
+    "description": "A source-backed recommendation for the benchmark and use case most likely to demonstrate a credible, positive Valto contribution.",
+    "generatedAt": "2026-07-13T14:41:16-04:00",
+    "cards": [],
+    "charts": [
+      {
+        "id": "benchmark_fit_chart",
+        "title": "Valto benchmark-fit assessment",
+        "subtitle": "Ordinal analyst rubric: 1 = poor fit and 5 = excellent fit; this is prioritization judgment, not measured Valto performance.",
+        "showDescription": true,
+        "intent": "comparison",
+        "question": "Which benchmark best combines an exact outcome signal, Valto-shaped failure headroom, practical integration, and external credibility?",
+        "rationale": "A ranked horizontal bar makes the implementation priority clear while the supporting table preserves the qualitative evidence and risks.",
+        "comparisonContext": {
+          "baseline": "Common five-point evaluation rubric",
+          "denominator": "Maximum fit score of 5",
+          "grain": "benchmark candidate",
+          "normalization": "ordinal judgment",
+          "semanticFamily": "benchmark fit",
+          "unit": "score"
+        },
+        "type": "horizontalBar",
+        "dataset": "benchmark_fit",
+        "sourceId": "src_rubric",
+        "encodings": {
+          "x": {"field": "candidate", "type": "nominal", "label": "Benchmark"},
+          "y": {"field": "overall_fit", "type": "quantitative", "format": "number", "label": "Fit score"},
+          "tooltip": [
+            {"field": "candidate", "type": "nominal", "label": "Benchmark"},
+            {"field": "overall_fit", "type": "quantitative", "format": "number", "label": "Overall fit"},
+            {"field": "exact_outcomes", "type": "quantitative", "format": "number", "label": "Exact outcomes"},
+            {"field": "valto_headroom", "type": "quantitative", "format": "number", "label": "Valto-shaped headroom"},
+            {"field": "implementation_ease", "type": "quantitative", "format": "number", "label": "Implementation ease"},
+            {"field": "external_credibility", "type": "quantitative", "format": "number", "label": "External credibility"},
+            {"field": "primary_use_case", "type": "text", "label": "Use case"},
+            {"field": "decision", "type": "text", "label": "Decision"}
+          ]
+        },
+        "xAxisTitle": "Benchmark candidate",
+        "yAxisTitle": "Fit score (1–5)",
+        "valueFormat": "number",
+        "layout": "full",
+        "palette": {"kind": "sequential", "name": "blue-priority"},
+        "labels": {"values": "all"},
+        "legend": {"position": "bottom", "sort": "spec"},
+        "maxRows": 6,
+        "settings": {"sort": "descending", "showValues": true},
+        "surface": {"surface": "export", "viewMode": "both"}
+      }
+    ],
+    "tables": [],
+    "sources": [
+      {
+        "id": "src_tau",
+        "label": "τ³-bench repository and current domains",
+        "href": "https://github.com/sierra-research/tau2-bench"
+      },
+      {
+        "id": "src_tau_paper",
+        "label": "τ-bench paper",
+        "href": "https://arxiv.org/abs/2406.12045"
+      },
+      {
+        "id": "src_tau_policy",
+        "label": "τ-bench retail policy",
+        "href": "https://github.com/sierra-research/tau-bench/blob/main/tau_bench/envs/retail/wiki.md"
+      },
+      {
+        "id": "src_saber",
+        "label": "SABER and τ-Bench Verified",
+        "href": "https://arxiv.org/abs/2512.07850"
+      },
+      {
+        "id": "src_verifier_tax",
+        "label": "The Verifier Tax",
+        "href": "https://arxiv.org/abs/2603.19328"
+      },
+      {
+        "id": "src_agentdojo",
+        "label": "AgentDojo paper",
+        "href": "https://arxiv.org/abs/2406.13352"
+      },
+      {
+        "id": "src_agentdojo_results",
+        "label": "AgentDojo official results registry",
+        "href": "https://agentdojo.spylab.ai/results/"
+      },
+      {
+        "id": "src_instrumental",
+        "label": "Instrumental Choices project",
+        "href": "https://instrumentalchoices.com/"
+      },
+      {
+        "id": "src_appworld",
+        "label": "AppWorld paper",
+        "href": "https://arxiv.org/abs/2407.18901"
+      },
+      {
+        "id": "src_safetybench",
+        "label": "Agent-SafetyBench paper",
+        "href": "https://arxiv.org/abs/2412.14470"
+      },
+      {
+        "id": "src_retailbench",
+        "label": "RetailBench paper",
+        "href": "https://arxiv.org/abs/2606.15862"
+      },
+      {
+        "id": "src_rubric",
+        "label": "Valto benchmark-fit decision rubric",
+        "path": "analysis/valto_benchmark_fit_source.sql",
+        "query": {
+          "engine": "SQLite",
+          "language": "sql",
+          "description": "Ordinal five-point analyst assessment based on the public benchmark sources reviewed on 13 July 2026.",
+          "executed_at": "2026-07-13T14:41:16-04:00",
+          "sql": "WITH rubric(candidate, overall_fit, exact_outcomes, valto_headroom, implementation_ease, external_credibility, primary_use_case, decision) AS (VALUES ('τ³-bench Airline/Retail',5,5,5,4,5,'Policy-bound customer-service mutations','Build first'), ('AgentDojo',4,5,5,4,5,'Prompt-injection-resistant authorization','Build second'), ('Instrumental Choices',3,5,2,4,3,'Rule-breaking shortcuts in cloud operations','Compact demo'), ('AppWorld',3,5,3,2,5,'Collateral-damage control across apps','Later generality study'), ('Agent-SafetyBench',2,3,4,2,4,'Broad agent safety','Use enforceable subset only'), ('RetailBench',2,3,4,1,4,'Long-horizon store operations','Avoid now')) SELECT * FROM rubric ORDER BY overall_fit DESC, candidate;"
+        }
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# Where Valto Can Win\n\nBenchmark and use-case recommendation • 13 July 2026"
+      },
+      {
+        "id": "executive_summary",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Executive Summary\n\n- **The best first benchmark is τ³-bench Airline, followed by Retail.** It tests customer-service agents that change reservations, issue refunds, cancel orders, and modify purchases under explicit company policy. Episodes are short, final state is scored exactly, and a user simulator provides the approval loop that Valto's `require_approval` verdict needs.\n- **There is independent evidence that this environment has real safeguard headroom.** SABER found that state-changing actions are only 14–18% of steps but dominate failures. Its safeguards raised ChatGPT-5 success by 17.3 percentage points on Airline and 3.1 points on Retail, and Claude Sonnet 4 by 4.7 and 5.0 points respectively. Those are not Valto results, but they show that intervention at the same boundary can improve end-to-end outcomes.\n- **AgentDojo should be the second benchmark and the dramatic security demo.** It contains 97 user tasks and 629 prompt-injection cases with exact utility and attack-success metrics. Valto can demonstrate that untrusted tool output cannot authorize a bank transfer, booking, email, or data disclosure.\n- **No honest benchmark can guarantee a positive result.** A guaranteed win would be a rigged demo. The defensible goal is to choose a benchmark where the mechanism is already independently validated, pre-register success gates, and let Valto either pass or reveal a product gap."
+      },
+      {
+        "id": "tau_recommendation",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## τ³-bench Gives Valto the Cleanest Path to Positive Lift\n\n[τ³-bench](https://github.com/sierra-research/tau2-bench) is built around three things Valto needs: a domain policy, structured tools, and tasks whose final database state can be checked. The original benchmark reported that frontier agents completed fewer than half of tasks and were inconsistent across repeated trials; retail `pass^8` was below 25% ([paper](https://arxiv.org/abs/2406.12045)). The current τ³ release incorporates more than 75 task fixes, making it preferable to the older dataset.\n\nThe use case is concrete and commercially legible: **govern an AI customer-service agent before it executes a refund, cancellation, exchange, payment change, or reservation mutation.** The retail policy, for example, requires identity verification, eligibility checks, a complete action summary, and explicit confirmation before consequential database changes ([policy](https://github.com/sierra-research/tau-bench/blob/main/tau_bench/envs/retail/wiki.md)).\n\nThat is a much better fit than CoffeeBench. The outcome arrives within one conversation; the correct final state is known; there are many independent tasks; the policy is explicit; and a blocked agent can ask the simulated user for confirmation and retry. Valto is no longer trying to infer whether beans purchased 40 days ago were profitable. It is deciding whether this specific refund or cancellation is authorized now.\n\nMost importantly, the mechanism has already produced lift independently. [SABER](https://arxiv.org/abs/2512.07850) found that mutating actions comprise only 14–18% of steps but account for disproportionate failure risk. On corrected τ-Bench tasks, safeguards around those actions improved both weaker and strong agents. That makes positive Valto contribution **plausible and testable**, not manufactured."
+      },
+      {
+        "id": "tau_experiment",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## The Experiment Should Test Safe Completion, Not Just Blocking\n\nRun the complete Airline task set first, then replicate on Retail. Use identical model and user-simulator versions across four arms:\n\n1. **Standard prompt-only agent:** the benchmark's normal domain policy.\n2. **Valto observe-only:** identical behavior, but every mutating proposal and outcome is logged.\n3. **Valto enforced:** deterministic checks at each mutating tool, returning an actionable reason or approval request when blocked.\n4. **Valto prompt-only control:** the exact Valto rules are restated as a high-salience prompt reminder but are not enforced.\n\nThe headline endpoint should be **exact full-task success**, not number of denials. Guard it with policy-violation rate, false-positive block rate, already-correct-task regression, recovery after a blocked action, approval burden, turns, latency, and token cost.\n\nPre-register a convincing success bar:\n\n- At least **+5 percentage points** absolute full-task success on the complete task set.\n- At least **80% fewer policy-violating mutations**.\n- No more than **2 points of regression** on tasks the baseline already completes correctly.\n- At least **50% recovery** after a Valto intervention.\n\nThe memorable demo trace is simple: the agent attempts a premature cancellation or invalid refund; Valto blocks it with the exact unmet condition; the agent obtains confirmation or corrects the parameters; the final database state passes. Aggregate results then show that this is a repeated effect, not a cherry-picked conversation."
+      },
+      {
+        "id": "agentdojo",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## AgentDojo Is the Best Second Story: Authority Cannot Come From Untrusted Data\n\n[AgentDojo](https://arxiv.org/abs/2406.13352) evaluates 97 realistic user tasks and 629 prompt-injection cases across banking, workspace, travel, and messaging. It separately scores benign utility, utility under attack, and whether the attacker's target action occurred. Its pipeline explicitly supports new defenses immediately before tool execution, so the integration point is natural ([documentation](https://agentdojo.spylab.ai/concepts/agent_pipeline/)).\n\nThe strongest Valto design is a **task-scoped authorization envelope**. Trusted user intent establishes which accounts, recipients, resources, amounts, and tools are authorized. Data returned from email, web search, files, Slack, or travel tools may inform the task, but it cannot widen that authority. A transfer to an attacker account or an email to an unapproved recipient is denied regardless of what the injected text says.\n\nThe potential headline is dramatic: “Valto reduced successful unauthorized actions while preserving legitimate task completion.” The official registry shows that one historical GPT-4o configuration had a 47.69% targeted attack-success rate; a built-in tool-filter defense reduced it to 6.84% while changing utility ([results](https://agentdojo.spylab.ai/results/)). This also establishes a serious comparison bar: Valto must beat or meaningfully differentiate from the existing tool filter, not merely compare against no defense.\n\nValto's differentiation should be the joined decision/outcome ledger, policy versions, task-scoped authority, human-review path, and held-out policy improvement—not a claim that rule-based blocking is novel."
+      },
+      {
+        "id": "landscape",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Benchmark Landscape\n\nThe ranking below is a decision aid, not a performance result. It combines exactness of outcomes, evidence that agents make Valto-addressable mistakes, integration practicality, and external credibility. **τ³-bench ranks first because it is the only candidate with exact short-horizon scoring, natural approval interactions, explicit domain policy, and independent evidence that interventions around the same mutating actions can improve task success.**"
+      },
+      {
+        "id": "benchmark_fit_chart_block",
+        "type": "chart",
+        "layout": "full",
+        "chartId": "benchmark_fit_chart",
+        "sourceId": "src_rubric"
+      },
+      {
+        "id": "landscape_detail",
+        "type": "markdown",
+        "layout": "full",
+        "body": "The chart's ordinal score should be read together with the evidence below; candidates with the same score can have very different strengths and risks.\n\n| Candidate | Exact outcome signal | Valto-shaped failure headroom | Integration effort | Recommendation |\n|---|---|---|---|---|\n| **τ³-bench Airline/Retail** | High: final database state and expected actions | High: policy-bound, consequential mutations; independent safeguard lift | Medium | **Build first** |\n| **AgentDojo** | High: benign utility, utility under attack, targeted attack success | High for susceptible attacks/models; must compare with existing defenses | Medium | **Build second** |\n| **Instrumental Choices** | High: deterministic completion and rule-breaking labels | Low–medium: only 5.1% of 1,680 reported runs showed adjusted rule-breaking, concentrated by model/task | Low–medium | Use as a compact enforcement demo, not the headline benchmark |\n| **AppWorld** | High: database-state tests and collateral-damage checks across 750 tasks | Medium: many irreversible API actions, but no single canonical policy layer | High | Valuable later for generality |\n| **Agent-SafetyBench** | Medium–high: 2,000 labeled safety cases | High overall—no tested agent exceeded 60%—but many risks are not deterministic tool-policy problems | Medium–high | Use only an enforceable action subset |\n| **RetailBench** | High episode-level net worth; weak action attribution | High economic headroom but long-horizon and path-dependent | High | Avoid now; too similar to CoffeeBench |\n\n[Instrumental Choices](https://instrumentalchoices.com/) is attractive because its cloud-budget, quota, deployment, and ledger tasks map directly to agent governance. Its low average violation rate makes it less reliable as the main positive-result benchmark, though it can provide excellent individual demonstrations. [AppWorld](https://arxiv.org/abs/2407.18901) is externally credible and checks collateral database changes, but extracting a defensible Valto policy across nine apps is a larger research project. [Agent-SafetyBench](https://arxiv.org/abs/2412.14470) confirms broad safety headroom and finds that prompts alone are insufficient, but the benchmark is broader than Valto's enforceable action surface. [RetailBench](https://arxiv.org/abs/2606.15862) is a sophisticated 180-day retail simulator, yet it recreates the attribution and replication difficulties that made CoffeeBench hard."
+      },
+      {
+        "id": "product_changes",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## This Benchmark Also Clarifies What Valto Must Become\n\nThe current numeric policy engine is sufficient for budgets and price thresholds, but τ³-bench and AgentDojo require a richer authorization model. The benchmark adapter should add:\n\n- Exact and set-valued context matches: authenticated user, reservation owner, approved recipient, eligible status, allowed payment method.\n- Stateful prerequisites and temporal rules: authentication before disclosure, confirmation after the final action summary, one mutation per authorization.\n- A genuine approval lifecycle: issue an approval request, bind approval to arguments and expiry, then allow the exact retried call.\n- Executable modification: rewrite safe parameters or return a structured correction the agent can reliably retry.\n- Task-scoped capabilities: untrusted observations cannot expand authorized tools, recipients, accounts, or spend.\n- Explicit recovery analytics: whether the agent corrected the action and completed the task after intervention.\n\nThese are not benchmark hacks. They are exactly the controls a production refund, booking, procurement, or payment agent would need."
+      },
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Recommended Next Steps\n\n1. **Build the τ³ Airline adapter first.** Wrap only state-changing tools and pass policy-relevant state into Valto. Keep read-only tools untouched.\n2. **Implement real `require_approval` and recovery.** A denial-only system may prevent damage while lowering completion; the product win is safe recovery.\n3. **Run a 10-task smoke across all arms.** Confirm instrumentation parity, exact scoring, intervention explanations, and retry behavior before paid scale-up.\n4. **Run the complete Airline set with three trials.** Use one capable model and one lower-cost model. Do not select tasks based on observed lift.\n5. **Replicate on Retail.** A cross-domain positive result is substantially more credible than tuning Airline until it wins.\n6. **Then build AgentDojo authorization envelopes.** Evaluate full benign tasks and attack cross-products, including adaptive attacks where practical.\n\nMy recommendation is to pause further CoffeeBench efficacy work and spend the next benchmark cycle on τ³-bench. Keep CoffeeBench as a later long-horizon case study."
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Further Questions\n\n- Is Valto's primary market position **economic control**, **general action authorization**, or the broader **policy lifecycle**? τ³-bench supports all three, but the messaging should choose one headline.\n- Should human approval be simulated for the benchmark or connected to a real lightweight approval UI? The latter is a stronger product demo.\n- Is automatic policy mining essential to the first public result? I recommend proving enforcement and recovery with a frozen expert policy first, then testing learning separately on held-out tasks.\n- What comparison matters commercially: no guardrail, prompt-only rules, an existing benchmark defense, or a conventional authorization service? The public study should include at least prompt-only and one credible defense baseline."
+      },
+      {
+        "id": "caveats",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Caveats and Assumptions\n\nThis is a benchmark-selection recommendation, not a measured Valto result. Published safeguard gains establish headroom but do not guarantee that Valto's current implementation will reproduce them. A recent τ-bench study found that runtime mediation can intercept many non-compliant actions while agents still fail to recover, producing a substantial “verifier tax” ([paper](https://arxiv.org/abs/2603.19328)). That is why recovery and safe completion—not raw blocks—must be primary metrics.\n\nThe candidate comparison is a structured judgment based on public benchmark design, reported results, integration surfaces, and the locally inspected Valto implementation as of 13 July 2026. Qualitative ratings are directional rather than empirical scores. Model snapshots, benchmark versions, prompts, policies, tasks, and all trajectories should be frozen and published with the final result."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-13T14:41:16-04:00",
+    "status": "ready",
+    "datasets": {
+      "benchmark_fit": [
+        {"candidate": "τ³-bench Airline/Retail", "overall_fit": 5, "exact_outcomes": 5, "valto_headroom": 5, "implementation_ease": 4, "external_credibility": 5, "primary_use_case": "Policy-bound customer-service mutations", "decision": "Build first"},
+        {"candidate": "AgentDojo", "overall_fit": 4, "exact_outcomes": 5, "valto_headroom": 5, "implementation_ease": 4, "external_credibility": 5, "primary_use_case": "Prompt-injection-resistant authorization", "decision": "Build second"},
+        {"candidate": "Instrumental Choices", "overall_fit": 3, "exact_outcomes": 5, "valto_headroom": 2, "implementation_ease": 4, "external_credibility": 3, "primary_use_case": "Rule-breaking shortcuts in cloud operations", "decision": "Compact demo"},
+        {"candidate": "AppWorld", "overall_fit": 3, "exact_outcomes": 5, "valto_headroom": 3, "implementation_ease": 2, "external_credibility": 5, "primary_use_case": "Collateral-damage control across apps", "decision": "Later generality study"},
+        {"candidate": "Agent-SafetyBench", "overall_fit": 2, "exact_outcomes": 3, "valto_headroom": 4, "implementation_ease": 2, "external_credibility": 4, "primary_use_case": "Broad agent safety", "decision": "Use enforceable subset only"},
+        {"candidate": "RetailBench", "overall_fit": 2, "exact_outcomes": 3, "valto_headroom": 4, "implementation_ease": 1, "external_credibility": 4, "primary_use_case": "Long-horizon store operations", "decision": "Avoid now"}
+      ]
+    }
+  },
+  "sources": [
+    {"id": "src_tau", "label": "τ³-bench repository and current domains", "href": "https://github.com/sierra-research/tau2-bench"},
+    {"id": "src_tau_paper", "label": "τ-bench paper", "href": "https://arxiv.org/abs/2406.12045"},
+    {"id": "src_tau_policy", "label": "τ-bench retail policy", "href": "https://github.com/sierra-research/tau-bench/blob/main/tau_bench/envs/retail/wiki.md"},
+    {"id": "src_saber", "label": "SABER and τ-Bench Verified", "href": "https://arxiv.org/abs/2512.07850"},
+    {"id": "src_verifier_tax", "label": "The Verifier Tax", "href": "https://arxiv.org/abs/2603.19328"},
+    {"id": "src_agentdojo", "label": "AgentDojo paper", "href": "https://arxiv.org/abs/2406.13352"},
+    {"id": "src_agentdojo_results", "label": "AgentDojo official results registry", "href": "https://agentdojo.spylab.ai/results/"},
+    {"id": "src_instrumental", "label": "Instrumental Choices project", "href": "https://instrumentalchoices.com/"},
+    {"id": "src_appworld", "label": "AppWorld paper", "href": "https://arxiv.org/abs/2407.18901"},
+    {"id": "src_safetybench", "label": "Agent-SafetyBench paper", "href": "https://arxiv.org/abs/2412.14470"},
+    {"id": "src_retailbench", "label": "RetailBench paper", "href": "https://arxiv.org/abs/2606.15862"},
+    {"id": "src_rubric", "label": "Valto benchmark-fit decision rubric", "path": "analysis/valto_benchmark_fit_source.sql"}
+  ]
+}

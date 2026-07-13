@@ -33,6 +33,13 @@ class RunConfig:
     # Truth-ledger leaderboard score is unaffected by this — it tells
     # the agent what to optimise for, not what is reported.
     kpi: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Optional [valto] block: govern the focal agent's capital-committing tools.
+    # Keys: enabled(bool), actor(agent_id), mode("observe"|"governed"),
+    # policy(path; defaults to the packaged approve-all observe.yaml),
+    # govern_tools(list[str]; default ["make_offer","roast"]), db_path(optional
+    # override; default trajectories/<name>/seed_<N>/valto_ledger.db).
+    # Absent/enabled=false ⇒ Valto off ⇒ existing runs unaffected.
+    valto: dict[str, Any] = field(default_factory=dict)
     # path the config was loaded from (for snapshot copying)
     source_path: str | None = None
 
@@ -64,6 +71,8 @@ class RunConfig:
             else:
                 print(f"[config] WARN: ignoring kpi[{aid}] (must be str or table)")
 
+        valto = {str(k): v for k, v in (data.get("valto") or {}).items()}
+
         name = exp.get("name") or path.stem
         main_agent_raw = run.get("main_agent")
         return cls(
@@ -75,6 +84,7 @@ class RunConfig:
             models=models,
             economy=economy,
             kpi=kpi,
+            valto=valto,
             main_agent=str(main_agent_raw) if main_agent_raw else None,
             source_path=str(path),
         )
@@ -133,9 +143,10 @@ class RunConfig:
                 env_mod.ROAST_RECIPES["green_coffee_kg"][field] = caster(value)
                 continue
             if key not in mapping:
-                # `p_res` is handled by main._seed_world which reads
-                # `economy.p_res` separately; other unknowns are warnings.
-                if key != "p_res":
+                # Reservation-price keys are applied in build_run against the
+                # item catalog (not module constants); everything else unknown
+                # is a warning.
+                if key not in ("p_res", "p_res_commodity", "p_res_specialty"):
                     print(f"[config] WARN: unknown economy key '{key}' (ignored)")
                 continue
             attr, caster = mapping[key]

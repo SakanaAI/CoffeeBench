@@ -1,0 +1,36 @@
+# Cheap LLM testbed: 1 Claude Haiku 4.5 focal roaster + 5 deterministic scripted
+# counterparties, Valto in OBSERVE mode on roaster_A. Only one agent hits the
+# API (~3x cheaper than Sonnet), and the deterministic counterparties isolate
+# the focal agent — the cleanest, cheapest controlled setup for the
+# observe -> label -> mine loop with a real LLM.
+#
+# Smoke test: max_days=12, no main_agent (run the full window even if the LLM
+# struggles). For the actual experiment bump max_days=90 and set
+# main_agent="roaster_A" (survival becomes a score lever).
+
+[experiment]
+name = "roaster_valto_observe_haiku"
+description = "Haiku-4.5 focal roaster_A + 5 scripted; Valto observe. Cheap real-LLM testbed for observe->label->mine."
+
+[run]
+# No main_agent: we must reach the day-45 checkpoint even if roaster_A struggles,
+# and a bankrupt focal is locked out of turns anyway (no further API cost), so
+# running the full window costs nothing extra. Survival is still captured via
+# each arm's bankrupt_day in the paired comparison.
+seeds = [0]
+max_days = 90
+
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "claude-haiku-4-5"
+roaster_B = "heuristic_roaster"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast"]

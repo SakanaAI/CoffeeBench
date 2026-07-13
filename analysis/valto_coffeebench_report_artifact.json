@@ -1,0 +1,383 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Valto × CoffeeBench: Benchmark Fit and Experiment Redesign",
+    "description": "A code- and run-backed assessment of whether CoffeeBench can demonstrate Valto's value, why the current result is not causal, and how to redesign the evidence program.",
+    "generatedAt": "2026-07-13T14:25:04-04:00",
+    "cards": [
+      {
+        "id": "headline",
+        "description": "Observed facts from the only complete 90-day live-LLM baseline/governed branch pair. These are diagnostics, not causal estimates.",
+        "dataset": "headline",
+        "sourceId": "src_fork",
+        "metrics": [
+          {"label": "Final NI gap", "field": "final_ni_gap", "format": "currency", "signed": true},
+          {"label": "First world divergence day", "field": "first_world_divergence", "format": "number"},
+          {"label": "First Valto intervention day", "field": "first_intervention", "format": "number"}
+        ]
+      }
+    ],
+    "charts": [
+      {
+        "id": "fork_equity_chart",
+        "title": "The live-LLM branches separated before Valto intervened",
+        "subtitle": "Roaster A true equity after the shared day-45 checkpoint; the first non-approve verdict was on day 66.",
+        "showDescription": true,
+        "intent": "trend",
+        "question": "Can the observed final income gap be attributed to Valto's policy interventions?",
+        "rationale": "A paired equity path exposes both the pre-intervention divergence and the larger gap that developed after denials began.",
+        "comparisonContext": {
+          "baseline": "Ungoverned branch from the same checkpoint",
+          "grain": "simulated day",
+          "normalization": "none",
+          "semanticFamily": "true equity",
+          "unit": "USD"
+        },
+        "type": "line",
+        "dataset": "fork_equity",
+        "sourceId": "src_fork",
+        "encodings": {
+          "x": {"field": "day", "type": "ordinal", "label": "Simulated day"},
+          "y": {"fields": ["baseline_equity", "governed_equity"], "type": "quantitative", "format": "currency", "label": "True equity", "unit": "USD"},
+          "tooltip": [
+            {"field": "day", "type": "ordinal", "label": "Day"},
+            {"field": "baseline_equity", "type": "quantitative", "format": "currency", "label": "Baseline equity", "unit": "USD"},
+            {"field": "governed_equity", "type": "quantitative", "format": "currency", "label": "Governed equity", "unit": "USD"},
+            {"field": "equity_gap", "type": "quantitative", "format": "currency", "label": "Governed − baseline", "unit": "USD"},
+            {"field": "baseline_cash", "type": "quantitative", "format": "currency", "label": "Baseline cash", "unit": "USD"},
+            {"field": "governed_cash", "type": "quantitative", "format": "currency", "label": "Governed cash", "unit": "USD"},
+            {"field": "baseline_deals", "type": "quantitative", "format": "number", "label": "Baseline deals"},
+            {"field": "governed_deals", "type": "quantitative", "format": "number", "label": "Governed deals"},
+            {"field": "treatment_started", "type": "nominal", "label": "Valto intervention started"}
+          ]
+        },
+        "xAxisTitle": "Simulated day",
+        "yAxisTitle": "True equity (USD)",
+        "valueFormat": "currency",
+        "unit": "USD",
+        "layout": "full",
+        "palette": {"kind": "semantic", "name": "baseline-vs-governed"},
+        "referenceLines": [
+          {"axis": "x", "value": 66, "label": "First Valto denial", "color": "red", "lineStyle": "dashed"}
+        ],
+        "labels": {"values": "endpoints"},
+        "legend": {"position": "bottom", "sort": "spec"},
+        "settings": {"showPoints": "never", "sort": "ascending"},
+        "surface": {"surface": "export", "interactiveLegend": true, "viewMode": "both"}
+      }
+    ],
+    "tables": [
+      {
+        "id": "label_quality_table",
+        "title": "Current usefulness labels contain outcome-model errors",
+        "subtitle": "Counts across five observe-mode ledgers (368 decisions). Categories are diagnostic and may overlap.",
+        "showDescription": true,
+        "dataset": "label_quality",
+        "sourceId": "src_labeling",
+        "defaultSort": {"field": "count", "direction": "desc"},
+        "density": "spacious",
+        "layout": "full",
+        "columns": [
+          {"field": "issue", "label": "Observed labeling behavior", "type": "text"},
+          {"field": "count", "label": "Rows", "format": "number"},
+          {"field": "benchmark_risk", "label": "Why it matters", "type": "text"}
+        ]
+      }
+    ],
+    "sources": [
+      {
+        "id": "src_fork",
+        "label": "Revenue-maximizing Haiku branch trajectories and governed Valto ledger",
+        "path": "analysis/valto_fork_source.sql",
+        "query": {
+          "engine": "Python/pandas + SQLite",
+          "language": "python",
+          "description": "Joined Roaster A daily truth states for the baseline and governed branches and located the first non-approve Valto verdict.",
+          "executed_at": "2026-07-13T14:25:04-04:00",
+          "tables_used": [
+            "trajectories/roaster_valto_revmax_haiku/seed_0/valto_experiment/baseline.json",
+            "trajectories/roaster_valto_revmax_haiku/seed_0/valto_experiment/governed.json",
+            "trajectories/roaster_valto_revmax_haiku/seed_0/valto_experiment/valto_ledger_governed.db"
+          ],
+          "filters": ["agent_id = roaster_A", "days 44 through 89"],
+          "metric_definitions": [
+            "True equity is CoffeeBench's environment-truth equity.",
+            "Final NI gap equals governed true net income minus baseline true net income.",
+            "Intervention means a Valto verdict other than approve."
+          ]
+        }
+      },
+      {
+        "id": "src_labeling",
+        "label": "CoffeeBench Valto attribution code and observe ledgers",
+        "path": "analysis/valto_label_quality_source.sql",
+        "query": {
+          "engine": "Python/pandas + SQLite",
+          "language": "python",
+          "description": "Audited decision outcome metrics across five observe-mode ledgers against the implemented labeling and mining behavior.",
+          "executed_at": "2026-07-13T14:25:04-04:00",
+          "tables_used": [
+            "coffeebench/valto/labeling.py",
+            "coffeebench/valto/miner.py",
+            "trajectories/roaster_valto_observe_haiku/seed_0/valto_ledger.db",
+            "trajectories/roaster_valto_revmax_haiku/seed_0/valto_ledger.db",
+            "trajectories/all6_gpt_valto/seed_0/valto_ledger.db",
+            "trajectories/all6_gpt_valto_hard/seed_0/valto_ledger.db",
+            "trajectories/roaster_valto_full_scripted/seed_0/valto_ledger.db"
+          ],
+          "metric_definitions": [
+            "Zero-fill useful listing: fill_rate = 0 and useful = true.",
+            "Non-dealt useful buy: dealt = false and useful = true.",
+            "Missing miner utility: sell outcome without metrics.utility.",
+            "Roast negative only due to spoilage: attributed spoilage > 0 and utility < 0 under the current roast utility."
+          ]
+        }
+      },
+      {
+        "id": "src_system",
+        "label": "CoffeeBench and Valto implementation review",
+        "query": {
+          "engine": "Repository code inspection",
+          "description": "Reviewed the simulation, agent tool surface, prompts, truth accounting, checkpoint/resume path, Valto wrapper, policy engine integration, run orchestration, and experiment plan.",
+          "executed_at": "2026-07-13T14:25:04-04:00",
+          "tables_used": [
+            "VALTO_EXPERIMENT_PLAN.md",
+            "coffeebench/runner.py",
+            "coffeebench/tools.py",
+            "coffeebench/valto/govern.py",
+            "coffeebench/valto/labeling.py",
+            "coffeebench/valto/run_experiment.py"
+          ]
+        }
+      },
+      {
+        "id": "src_mining",
+        "label": "Generated learned-policy reports",
+        "query": {
+          "engine": "Markdown report audit",
+          "description": "Compared reported training and evaluation counts and held-out flags across four policy-mining runs.",
+          "executed_at": "2026-07-13T14:25:04-04:00",
+          "tables_used": [
+            "trajectories/all6_gpt_valto/seed_0/valto_experiment/LEARNED_POLICY_REPORT.md",
+            "trajectories/all6_gpt_valto_hard/seed_0/valto_experiment/LEARNED_POLICY_REPORT.md",
+            "trajectories/roaster_valto_observe_haiku/seed_0/valto_experiment/LEARNED_POLICY_REPORT.md",
+            "trajectories/roaster_valto_revmax_haiku/seed_0/valto_experiment/LEARNED_POLICY_REPORT.md"
+          ]
+        }
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "layout": "full",
+        "body": "# Valto × CoffeeBench: Benchmark Fit and Experiment Redesign\n\nTechnical assessment • 13 July 2026"
+      },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_system",
+        "body": "## Technical Summary\n\n**Recommendation: do not use the current CoffeeBench run as Valto's primary efficacy benchmark.** Use CoffeeBench as the secondary, long-horizon case study in a two-benchmark evidence program. The primary benchmark should be a high-volume, exact-attribution environment such as Taskmarket, the provenance-aware vending benchmark, or a new procurement/paid-tools benchmark.\n\nCoffeeBench is nevertheless valuable. It tests whether Valto can sit between an autonomous agent and irreversible economic tools, capture intent, learn from delayed outcomes, enforce a principal's policy, survive regime changes, and preserve an auditable decision trail. Those are product-realistic capabilities that short hazard benchmarks miss.\n\nThe strongest product framing is **principal–agent control**: give the focal LLM an aggressive revenue or growth mandate while the principal cares about net income, solvency, service level, and tail loss. A prompt-only policy arm then asks whether advice is enough; a Valto arm tests whether enforceable policy adds incremental protection.\n\nThe current evidence does not establish lift. The sole complete live-LLM branch pair ended with governed net income $1,181.30 below baseline, but the simulated world first diverged on day 46 and Valto first denied an action on day 66. The run is one noisy episode, the learned policy was trained and evaluated on the same rows, and its roast label treats any attributed spoilage as negative without crediting downstream margin. The result is a useful failure diagnosis, not a causal estimate of Valto's value."
+      },
+      {
+        "id": "headline_strip",
+        "type": "metric-strip",
+        "layout": "full",
+        "cardIds": ["headline"],
+        "sourceId": "src_fork"
+      },
+      {
+        "id": "key_findings",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_fork",
+        "body": "## Key Findings\n\n### 1. The negative branch result is directionally concerning but not causal\n\nBoth branches start from the same checkpoint and their focal equity is initially equal. However, other world state differs by day 46, focal deal counts differ by day 47, and the focal equity gap is already **−$155.13 on day 65**, one day before the first denial. After treatment starts, the gap worsens by another **$1,026.17** and eight roast calls are denied. This pattern supports the hypothesis that the mined rule was harmful, but a single nondeterministic LLM branch pair cannot separate policy effect from model-induced path divergence."
+      },
+      {
+        "id": "fork_chart_block",
+        "type": "chart",
+        "layout": "full",
+        "chartId": "fork_equity_chart",
+        "sourceId": "src_fork"
+      },
+      {
+        "id": "chart_takeaway",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_fork",
+        "body": "The chart should therefore be read as **process evidence**, not an A/B effect estimate. It demonstrates that CoffeeBench checkpointing works and that a Valto rule can materially alter a trajectory; it does not quantify how much of the final gap Valto caused. For live models, either replay cached pre-intervention decisions or replace the fork claim with repeated, randomized full episodes."
+      },
+      {
+        "id": "measurement",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_labeling",
+        "body": "### 2. The current outcome model can teach Valto the wrong policy\n\nThe ledger plumbing is real and useful: four economic actions are intercepted, intent and context are recorded, immediate execution status is reported, and deferred outcomes are merged into each decision. The weak point is the label, not the logging.\n\nThe present utilities are incomplete proxies. Buy offers can be labeled useful when no deal happened; an unsold listing can be useful because the opportunity-cost calculation is zero; sell outcomes lack the scalar utility consumed by the miner; and a roast receives only attributed spoilage cost, with no downstream revenue or contribution margin. A capacity-headroom roast rule learned from that signal can block productive replenishment. The reported 14-day coverage rate measures whether spoilage was assigned to an eligible recent action—not whether the assignment is causally correct."
+      },
+      {
+        "id": "label_table_block",
+        "type": "table",
+        "layout": "full",
+        "tableId": "label_quality_table",
+        "sourceId": "src_labeling"
+      },
+      {
+        "id": "coffeebench_fit",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_system",
+        "body": "## Is CoffeeBench the Right Benchmark?\n\n**It is an excellent integration and policy-lifecycle benchmark, but only a mediocre primary causal benchmark in its current form.**\n\n| Benchmark property | CoffeeBench fit | Interpretation |\n|---|---:|---|\n| Structured, interceptable actions | High | Offers, roasting, listings, and acceptances are clear enforcement points. |\n| Delayed, path-dependent outcomes | High | Inventory, spoilage, loyalty, credit, and demand regimes test long-horizon governance. |\n| Audit trail and checkpointability | High | Environment-truth accounting and resume support make failures inspectable. |\n| Exact action-to-outcome provenance | Low today | Weighted-average inventory and heuristic spoilage allocation blur causal credit. |\n| Hazard density / decision volume | Low–medium | Strong agents often generate few clearly bad decisions, so policy learning is sample-starved. |\n| Live-LLM causal control | Low | The external model can produce different actions from identical state even at temperature zero. |\n| Ecological credibility | High | Multi-party commerce is a compelling product story if claims stay calibrated. |\n\nA tool like Valto is most useful when five conditions hold: the agent repeatedly invokes structured, consequential tools; a principal has an objective that differs from the agent's local KPI; outcomes can be measured and linked back to decisions; recurring failure modes are stable enough to express as policy; and hard enforcement is more valuable than another prompt reminder. Examples include procurement, paid API/tool use, marketplace operations, treasury limits, ad-spend allocation, vendor approval, and data-access controls.\n\nIt is less useful for one-off low-stakes tasks, purely creative work, actions with no enforceable choke point, domains where outcomes arrive but cannot be attributed, or rapidly novel strategy where static rules create more opportunity cost than risk reduction."
+      },
+      {
+        "id": "design",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_mining",
+        "body": "## Recommended Experimental Design\n\n### Evidence portfolio\n\n1. **Primary efficacy benchmark — fast and exact.** Use Taskmarket, provenance-aware vending, or a new procurement/paid-tools environment with many decisions per episode, explicit hazards, exact immediate or lot-level utility, separate train and held-out seeds, and inexpensive replication. This supports the headline claim that Valto improves principal utility and reduces preventable loss.\n2. **Secondary CoffeeBench study — realistic and long-horizon.** Use it to demonstrate delayed-outcome learning, policy enforcement, regime robustness, auditability, policy harm detection, rollback, and graceful operation in an endogenous economy. Call this a case study or stress test until it has adequate replication and provenance.\n\n### CoffeeBench arms\n\nRun all arms from day 0 on held-out world seeds, with run order randomized and dated model versions pinned:\n\n- **Ungoverned:** revenue-pressure focal prompt, no learned policy.\n- **Prompt-only policy:** the same frozen learned policy is included as advice, but cannot block tools.\n- **Valto enforced:** identical focal prompt, with the frozen policy enforced at the tool boundary.\n- **Optional static expert policy:** distinguishes learned-policy quality from enforcement quality.\n\nThe prompt-only arm is essential: it tests Valto's product claim—enforcement and memory beyond prompt advice—rather than merely testing whether a written rule helps an LLM. Observe-mode instrumentation should be identical across arms so logging itself is not a confound.\n\n### Sampling and analysis\n\nTrain on complete episodes from dedicated training seeds, freeze the policy, then evaluate on unseen environment seeds. A practical starting point is **6–10 training seeds** and **8–12 held-out seeds**, with **2–3 independent LLM repeats per seed and arm**. The unit of inference is an episode/world seed; use a seed-clustered bootstrap or hierarchical model with LLM repeats nested within seed. Report confidence intervals and win rates, not just one mean or one fork.\n\nFor deterministic system tests, checkpoint forks are excellent. For live-model efficacy, require byte-identical state and cached/replayed decisions until the first intervention; otherwise treat full-episode replication as the causal design."
+      },
+      {
+        "id": "metrics",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_system",
+        "body": "## KPI Framework and Attribution Repair\n\n**Primary endpoint:** held-out episode lift in environment-truth net income or principal utility, Valto enforced minus ungoverned.\n\n**Guardrails:** revenue or service-level retention, bankruptcy rate, worst-decile principal utility, lost-sales/opportunity-cost regret, and false-positive block rate.\n\n**Mechanism diagnostics:** intervention precision, harmful-action coverage, rule hit counts, approve/modify/deny mix, policy compliance, decision latency, label completeness, and provenance coverage. Waste can remain a diagnostic but must not be the objective by itself.\n\nReplace heuristic labels with decision-linked contribution:\n\n- **Buy:** downstream contribution of acquired lots minus purchase cost, carrying loss, default exposure, and spoilage.\n- **Roast:** realized downstream contribution of the produced batch minus labor, carrying cost, and spoilage.\n- **List:** realized contribution within a declared horizon, with explicit penalties for zero fill, avoidable spoilage, and feasible market opportunity cost; mark end-of-run rows as censored.\n- **Sell:** realized margin net of bad debt, reversal, return, and payment timing.\n\nThis requires lot and batch identifiers to flow through purchases, roasting, listings, deals, invoices, payments, reversals, and spoilage. Add list/sell policy templates and retain a rule only when its estimated off-policy value and precision remain positive on held-out data. Also measure **intervention regret**: profitable actions Valto prevented."
+      },
+      {
+        "id": "robustness",
+        "type": "markdown",
+        "layout": "full",
+        "sourceId": "src_system",
+        "body": "## Limitations and Robustness Gates\n\nThe existing experiment miner reports `held-out=False` and uses the same labeled rows for training and evaluation. Current policy generation covers only buy and roast actions, despite logging list and sell. The embedded Valto path can enforce a frozen policy, but CoffeeBench does not yet implement the plan's online policy-update loop; `modify` returns a suggestion rather than executing rewritten arguments, and `require_approval` needs a real approval workflow before it is a valid arm.\n\nBefore evaluation, require a **viable-but-hard calibration gate**: a scripted oracle or proficient policy should be profitable; baseline LLMs should encounter enough addressable mistakes to learn from; and the condition should not drive nearly every participant underwater. In the current hard day-45 checkpoint all six agents are below initial equity, which makes survival a property of the environment as much as of governance.\n\nRecord code commit, config hash, prompt hash, policy hash, model snapshot, provider retry history, seed, and branch provenance. Pre-register the primary endpoint, guardrails, minimum sample size, and stopping rules. A rule that improves its training ledger but harms held-out utility should be rejected or rolled back, and that rollback can itself become a strong Valto product demonstration."
+      },
+      {
+        "id": "next_steps",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Recommended Next Steps\n\n1. **Repair attribution first.** Introduce lot/batch provenance and net-contribution labels; add label-level unit tests for no-deal buys, zero-fill listings, profitable roasts, bad debt, reversals, and horizon censoring.\n2. **Calibrate one viable condition.** Keep demand and counterparties economically functional, then introduce targeted hazards such as supplier quality, temporary price dislocations, duplicate paid information, credit risk, or spend caps.\n3. **Build a separate observational training corpus.** Mine across multiple complete training episodes; freeze the selected policy and publish its held-out backtest before running governed evaluation.\n4. **Run the three-arm held-out study.** Ungoverned, prompt-only, and Valto-enforced, with repeated full episodes and seed-clustered uncertainty.\n5. **Position the evidence honestly.** Lead with the exact-attribution benchmark for efficacy; use CoffeeBench to show realism, delayed outcomes, enforcement, auditability, and policy-harm recovery.\n\nThe most persuasive Valto story is not “rules always help.” It is: **Valto turns autonomous tool use into a measurable, enforceable, and revisable control system—and it can detect when its own policy is harmful.**"
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "layout": "full",
+        "body": "## Further Questions\n\n- Which principal objective is Valto meant to protect first: net income, solvency, compliance, service level, or a weighted combination?\n- Is the core product claim policy learning, policy enforcement, or closed-loop policy lifecycle management? The benchmark and arms should isolate that claim.\n- Can production integrations propagate provenance identifiers through downstream systems, or does Valto need counterfactual/off-policy estimators when exact attribution is unavailable?\n- What false-positive cost is acceptable? This determines deny versus modify versus human approval thresholds.\n- Should CoffeeBench showcase a policy that succeeds, or a system that discovers and rolls back a harmful policy? The latter may be the more differentiated demonstration."
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-13T14:25:04-04:00",
+    "status": "ready",
+    "datasets": {
+      "headline": [
+        {"final_ni_gap": -1181.30, "first_world_divergence": 46, "first_intervention": 66}
+      ],
+      "label_quality": [
+        {"issue": "Roasts negative only because spoilage was attributed", "count": 71, "benchmark_risk": "Blocks productive transformation without crediting downstream margin."},
+        {"issue": "Sell outcomes missing miner utility", "count": 52, "benchmark_risk": "The miner cannot learn sell-side rules from logged outcomes."},
+        {"issue": "Non-dealt buys marked useful", "count": 24, "benchmark_risk": "Credits offers that never changed inventory or economics."},
+        {"issue": "Zero-fill listings marked useful", "count": 6, "benchmark_risk": "Rewards listings that sold nothing."}
+      ],
+      "fork_equity": [
+        {"day": 44, "baseline_equity": 16275.15, "governed_equity": 16275.15, "equity_gap": 0.0, "baseline_cash": 20342.0, "governed_cash": 20342.0, "baseline_deals": 115, "governed_deals": 115, "treatment_started": false},
+        {"day": 45, "baseline_equity": 16243.83, "governed_equity": 16243.83, "equity_gap": 0.0, "baseline_cash": 20267.0, "governed_cash": 20267.0, "baseline_deals": 116, "governed_deals": 116, "treatment_started": false},
+        {"day": 46, "baseline_equity": 16212.28, "governed_equity": 16212.28, "equity_gap": 0.0, "baseline_cash": 20237.0, "governed_cash": 20237.0, "baseline_deals": 118, "governed_deals": 118, "treatment_started": false},
+        {"day": 47, "baseline_equity": 16317.24, "governed_equity": 16317.24, "equity_gap": 0.0, "baseline_cash": 20747.0, "governed_cash": 20747.0, "baseline_deals": 121, "governed_deals": 119, "treatment_started": false},
+        {"day": 48, "baseline_equity": 16329.23, "governed_equity": 16329.23, "equity_gap": 0.0, "baseline_cash": 20757.0, "governed_cash": 20891.0, "baseline_deals": 121, "governed_deals": 119, "treatment_started": false},
+        {"day": 49, "baseline_equity": 16297.44, "governed_equity": 16297.44, "equity_gap": 0.0, "baseline_cash": 20727.0, "governed_cash": 20861.0, "baseline_deals": 123, "governed_deals": 120, "treatment_started": false},
+        {"day": 50, "baseline_equity": 16379.79, "governed_equity": 16293.45, "equity_gap": -86.34, "baseline_cash": 20697.0, "governed_cash": 20931.0, "baseline_deals": 127, "governed_deals": 122, "treatment_started": false},
+        {"day": 51, "baseline_equity": 16383.45, "governed_equity": 16261.45, "equity_gap": -122.0, "baseline_cash": 21112.0, "governed_cash": 20751.0, "baseline_deals": 127, "governed_deals": 122, "treatment_started": false},
+        {"day": 52, "baseline_equity": 16351.25, "governed_equity": 16229.25, "equity_gap": -122.0, "baseline_cash": 21082.0, "governed_cash": 20721.0, "baseline_deals": 128, "governed_deals": 123, "treatment_started": false},
+        {"day": 53, "baseline_equity": 16388.41, "governed_equity": 16265.5, "equity_gap": -122.91, "baseline_cash": 21292.0, "governed_cash": 20931.0, "baseline_deals": 130, "governed_deals": 124, "treatment_started": false},
+        {"day": 54, "baseline_equity": 16396.44, "governed_equity": 16284.44, "equity_gap": -112.0, "baseline_cash": 21402.0, "governed_cash": 21081.0, "baseline_deals": 131, "governed_deals": 126, "treatment_started": false},
+        {"day": 55, "baseline_equity": 16363.8, "governed_equity": 16251.8, "equity_gap": -112.0, "baseline_cash": 21222.0, "governed_cash": 20949.0, "baseline_deals": 131, "governed_deals": 126, "treatment_started": false},
+        {"day": 56, "baseline_equity": 16330.93, "governed_equity": 16218.93, "equity_gap": -112.0, "baseline_cash": 21192.0, "governed_cash": 20919.0, "baseline_deals": 134, "governed_deals": 129, "treatment_started": false},
+        {"day": 57, "baseline_equity": 16366.49, "governed_equity": 16239.3, "equity_gap": -127.19, "baseline_cash": 21252.0, "governed_cash": 21036.0, "baseline_deals": 135, "governed_deals": 129, "treatment_started": false},
+        {"day": 58, "baseline_equity": 16384.87, "governed_equity": 16206.25, "equity_gap": -178.62, "baseline_cash": 21402.0, "governed_cash": 20916.0, "baseline_deals": 136, "governed_deals": 132, "treatment_started": false},
+        {"day": 59, "baseline_equity": 16351.72, "governed_equity": 16229.72, "equity_gap": -122.0, "baseline_cash": 21372.0, "governed_cash": 21032.0, "baseline_deals": 138, "governed_deals": 134, "treatment_started": false},
+        {"day": 60, "baseline_equity": 16387.14, "governed_equity": 16270.41, "equity_gap": -116.73, "baseline_cash": 21492.0, "governed_cash": 21161.0, "baseline_deals": 139, "governed_deals": 135, "treatment_started": false},
+        {"day": 61, "baseline_equity": 16405.41, "governed_equity": 16235.83, "equity_gap": -169.58, "baseline_cash": 21561.0, "governed_cash": 21106.0, "baseline_deals": 141, "governed_deals": 136, "treatment_started": false},
+        {"day": 62, "baseline_equity": 16439.07, "governed_equity": 16252.11, "equity_gap": -186.96, "baseline_cash": 21711.0, "governed_cash": 21246.0, "baseline_deals": 143, "governed_deals": 140, "treatment_started": false},
+        {"day": 63, "baseline_equity": 16411.77, "governed_equity": 16290.26, "equity_gap": -121.51, "baseline_cash": 21638.0, "governed_cash": 21306.0, "baseline_deals": 145, "governed_deals": 140, "treatment_started": false},
+        {"day": 64, "baseline_equity": 16449.37, "governed_equity": 16256.93, "equity_gap": -192.44, "baseline_cash": 21788.0, "governed_cash": 21219.0, "baseline_deals": 147, "governed_deals": 141, "treatment_started": false},
+        {"day": 65, "baseline_equity": 16418.78, "governed_equity": 16263.65, "equity_gap": -155.13, "baseline_cash": 21678.0, "governed_cash": 21329.0, "baseline_deals": 149, "governed_deals": 144, "treatment_started": false},
+        {"day": 66, "baseline_equity": 16456.41, "governed_equity": 16255.98, "equity_gap": -200.43, "baseline_cash": 21801.0, "governed_cash": 21299.0, "baseline_deals": 151, "governed_deals": 145, "treatment_started": true},
+        {"day": 67, "baseline_equity": 16467.95, "governed_equity": 16291.23, "equity_gap": -176.72, "baseline_cash": 21846.0, "governed_cash": 21476.0, "baseline_deals": 153, "governed_deals": 145, "treatment_started": true},
+        {"day": 68, "baseline_equity": 16506.87, "governed_equity": 16250.37, "equity_gap": -256.5, "baseline_cash": 22056.0, "governed_cash": 21446.0, "baseline_deals": 155, "governed_deals": 147, "treatment_started": true},
+        {"day": 69, "baseline_equity": 16582.65, "governed_equity": 16216.36, "equity_gap": -366.29, "baseline_cash": 22306.0, "governed_cash": 21416.0, "baseline_deals": 157, "governed_deals": 147, "treatment_started": true},
+        {"day": 70, "baseline_equity": 16610.87, "governed_equity": 16182.27, "equity_gap": -428.6, "baseline_cash": 22396.0, "governed_cash": 21386.0, "baseline_deals": 159, "governed_deals": 147, "treatment_started": true},
+        {"day": 71, "baseline_equity": 16643.7, "governed_equity": 16148.17, "equity_gap": -495.53, "baseline_cash": 22516.0, "governed_cash": 21356.0, "baseline_deals": 162, "governed_deals": 148, "treatment_started": true},
+        {"day": 72, "baseline_equity": 16615.7, "governed_equity": 16103.96, "equity_gap": -511.74, "baseline_cash": 22371.0, "governed_cash": 21326.0, "baseline_deals": 164, "governed_deals": 148, "treatment_started": true},
+        {"day": 73, "baseline_equity": 16655.2, "governed_equity": 16069.61, "equity_gap": -585.59, "baseline_cash": 22521.0, "governed_cash": 21296.0, "baseline_deals": 165, "governed_deals": 149, "treatment_started": true},
+        {"day": 74, "baseline_equity": 16620.8, "governed_equity": 16035.21, "equity_gap": -585.59, "baseline_cash": 22467.0, "governed_cash": 21266.0, "baseline_deals": 167, "governed_deals": 152, "treatment_started": true},
+        {"day": 75, "baseline_equity": 16669.27, "governed_equity": 16076.97, "equity_gap": -592.3, "baseline_cash": 22717.0, "governed_cash": 21506.0, "baseline_deals": 169, "governed_deals": 153, "treatment_started": true},
+        {"day": 76, "baseline_equity": 16715.27, "governed_equity": 16112.87, "equity_gap": -602.4, "baseline_cash": 22867.0, "governed_cash": 21716.0, "baseline_deals": 171, "governed_deals": 154, "treatment_started": true},
+        {"day": 77, "baseline_equity": 16745.37, "governed_equity": 16075.29, "equity_gap": -670.08, "baseline_cash": 22990.0, "governed_cash": 21686.0, "baseline_deals": 173, "governed_deals": 154, "treatment_started": true},
+        {"day": 78, "baseline_equity": 16784.01, "governed_equity": 16040.7, "equity_gap": -743.31, "baseline_cash": 22960.0, "governed_cash": 21656.0, "baseline_deals": 175, "governed_deals": 154, "treatment_started": true},
+        {"day": 79, "baseline_equity": 16840.47, "governed_equity": 16003.08, "equity_gap": -837.39, "baseline_cash": 23470.0, "governed_cash": 21626.0, "baseline_deals": 177, "governed_deals": 154, "treatment_started": true},
+        {"day": 80, "baseline_equity": 16805.61, "governed_equity": 15965.46, "equity_gap": -840.15, "baseline_cash": 23302.0, "governed_cash": 21596.0, "baseline_deals": 177, "governed_deals": 154, "treatment_started": true},
+        {"day": 81, "baseline_equity": 16770.76, "governed_equity": 15930.84, "equity_gap": -839.92, "baseline_cash": 23272.0, "governed_cash": 21566.0, "baseline_deals": 179, "governed_deals": 155, "treatment_started": true},
+        {"day": 82, "baseline_equity": 16835.71, "governed_equity": 15894.94, "equity_gap": -940.77, "baseline_cash": 23582.0, "governed_cash": 21552.0, "baseline_deals": 181, "governed_deals": 155, "treatment_started": true},
+        {"day": 83, "baseline_equity": 16800.73, "governed_equity": 15860.17, "equity_gap": -940.56, "baseline_cash": 23420.0, "governed_cash": 21522.0, "baseline_deals": 181, "governed_deals": 155, "treatment_started": true},
+        {"day": 84, "baseline_equity": 16765.75, "governed_equity": 15822.4, "equity_gap": -943.35, "baseline_cash": 23390.0, "governed_cash": 21492.0, "baseline_deals": 183, "governed_deals": 155, "treatment_started": true},
+        {"day": 85, "baseline_equity": 16869.1, "governed_equity": 15787.63, "equity_gap": -1081.47, "baseline_cash": 23840.0, "governed_cash": 21462.0, "baseline_deals": 184, "governed_deals": 155, "treatment_started": true},
+        {"day": 86, "baseline_equity": 16833.97, "governed_equity": 15749.76, "equity_gap": -1084.21, "baseline_cash": 23753.0, "governed_cash": 21432.0, "baseline_deals": 185, "governed_deals": 155, "treatment_started": true},
+        {"day": 87, "baseline_equity": 16798.84, "governed_equity": 15711.88, "equity_gap": -1086.96, "baseline_cash": 23666.0, "governed_cash": 21402.0, "baseline_deals": 186, "governed_deals": 155, "treatment_started": true},
+        {"day": 88, "baseline_equity": 16763.56, "governed_equity": 15676.98, "equity_gap": -1086.58, "baseline_cash": 23636.0, "governed_cash": 21372.0, "baseline_deals": 187, "governed_deals": 155, "treatment_started": true},
+        {"day": 89, "baseline_equity": 16820.28, "governed_equity": 15638.98, "equity_gap": -1181.3, "baseline_cash": 23926.0, "governed_cash": 21342.0, "baseline_deals": 187, "governed_deals": 155, "treatment_started": true}
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "src_fork",
+      "label": "Revenue-maximizing Haiku branch trajectories and governed Valto ledger",
+      "path": "analysis/valto_fork_source.sql",
+      "query": {
+        "engine": "Python/pandas + SQLite",
+        "language": "python",
+        "description": "Joined Roaster A daily truth states for the baseline and governed branches and located the first non-approve Valto verdict.",
+        "executed_at": "2026-07-13T14:25:04-04:00",
+        "tables_used": [
+          "trajectories/roaster_valto_revmax_haiku/seed_0/valto_experiment/baseline.json",
+          "trajectories/roaster_valto_revmax_haiku/seed_0/valto_experiment/governed.json",
+          "trajectories/roaster_valto_revmax_haiku/seed_0/valto_experiment/valto_ledger_governed.db"
+        ]
+      }
+    },
+    {
+      "id": "src_labeling",
+      "label": "CoffeeBench Valto attribution code and observe ledgers",
+      "path": "analysis/valto_label_quality_source.sql",
+      "query": {
+        "engine": "Python/pandas + SQLite",
+        "language": "python",
+        "description": "Audited decision outcome metrics across five observe-mode ledgers against the implemented labeling and mining behavior.",
+        "executed_at": "2026-07-13T14:25:04-04:00",
+        "tables_used": ["coffeebench/valto/labeling.py", "coffeebench/valto/miner.py"]
+      }
+    },
+    {
+      "id": "src_system",
+      "label": "CoffeeBench and Valto implementation review",
+      "query": {
+        "engine": "Repository code inspection",
+        "description": "Reviewed the simulation, tool surface, prompts, accounting, checkpointing, Valto integration, and experiment orchestration.",
+        "executed_at": "2026-07-13T14:25:04-04:00",
+        "tables_used": ["VALTO_EXPERIMENT_PLAN.md", "coffeebench/valto/run_experiment.py"]
+      }
+    },
+    {
+      "id": "src_mining",
+      "label": "Generated learned-policy reports",
+      "query": {
+        "engine": "Markdown report audit",
+        "description": "Compared training/evaluation counts and held-out flags across policy-mining runs.",
+        "executed_at": "2026-07-13T14:25:04-04:00",
+        "tables_used": ["trajectories/*/seed_0/valto_experiment/LEARNED_POLICY_REPORT.md"]
+      }
+    }
+  ]
+}

@@ -67,6 +67,12 @@ class GeminiModel:
                 "output": 12.00,
             },
             "gemini-2.5-pro": {"input": 1.25, "cached_input": 0.125, "output": 10.00},
+            # --- Flash / Flash-Lite tiers (cheap; May-2026 rates) ---
+            # Cached-input ≈ 10% of input (consistent with the pro tiers).
+            "gemini-3.5-flash": {"input": 1.50, "cached_input": 0.15, "output": 9.00},
+            "gemini-3-flash": {"input": 0.50, "cached_input": 0.05, "output": 3.00},
+            "gemini-3.1-flash-lite": {"input": 0.25, "cached_input": 0.025, "output": 1.50},
+            "gemini-2.5-flash-lite": {"input": 0.10, "cached_input": 0.01, "output": 0.40},
         }
 
     # ---------- pricing ----------
@@ -77,7 +83,18 @@ class GeminiModel:
         cached_input_tokens: int,
         completion_tokens: int,
     ) -> float:
-        p = self.pricing[self.model]
+        # Graceful: an unknown model id must NOT crash a paid run. Fall back to
+        # ~Gemini-3-Flash rates and warn once so the cost is still reported (and
+        # we know to add the exact id to `self.pricing`).
+        p = self.pricing.get(self.model)
+        if p is None:
+            if not getattr(self, "_warned_pricing", False):
+                print(
+                    f"[gemini] WARN: no pricing entry for '{self.model}'; using "
+                    f"~Flash fallback rates. Add it to self.pricing for exact cost."
+                )
+                self._warned_pricing = True
+            p = {"input": 0.50, "cached_input": 0.05, "output": 3.00}
         return (
             non_cached_input_tokens * p["input"]
             + cached_input_tokens * p["cached_input"]

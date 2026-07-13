@@ -1,0 +1,27 @@
+# Fully deterministic, zero-external-cost economy: every one of the six agents
+# is driven by a scripted role policy (coffeebench/models/scripted.py). No API
+# keys, no provider tokens, no cost — the whole supply chain runs actively and
+# reproducibly for a given seed. This is the substrate for the checkpoint /
+# branch verification (docs/deterministic_checkpointing.md) that must pass
+# before any Valto integration.
+#
+# No `main_agent` is set on purpose: the run should complete the full horizon
+# even if some scripted agent goes bankrupt (negative outcomes are expected and
+# desirable coverage), rather than terminating early.
+
+[experiment]
+name = "deterministic_economy"
+description = "Zero-LLM active economy; all six agents on deterministic scripted role policies. Reproducible per seed."
+
+[run]
+seeds = [0, 1, 2]
+max_days = 90
+
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "heuristic_roaster"
+roaster_B = "heuristic_roaster"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"

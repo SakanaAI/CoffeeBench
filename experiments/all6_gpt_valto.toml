@@ -1,0 +1,24 @@
+# All six agents on gpt-5.4-mini — a fully-live multi-agent economy on the model
+# the Valto benchmarks (taskmarket/vending) used, so it's proven on this task.
+# Cheaper than Haiku ($0.75/$4.50 vs $1/$5) and OpenAI auto-caches the repeated
+# context (system prompt + history), which dominates CoffeeBench calls — so the
+# effective cost runs below Haiku. Real OpenAI rate limits (no free-tier 429s).
+#
+# Valto observes/logs roaster_A's full decision surface (buy/produce/list/sell).
+
+[experiment]
+name = "all6_gpt_valto"
+description = "All 6 agents on gpt-5.4-mini (live multi-agent economy); Valto observe on roaster_A over buy/produce/list/sell."
+
+[run]
+seeds = [0]
+max_days = 90
+
+[models]
+default = "gpt-5.4-mini"
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast", "post_listing", "accept_offer"]

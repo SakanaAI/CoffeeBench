@@ -1,0 +1,28 @@
+# M0 wiring smoke test: the FREE scripted economy with Valto observe-mode
+# governance on roaster_A. Zero API cost (all six agents scripted), but the
+# roaster's make_offer (buy green) and roast (produce) tools flow through Valto,
+# so the decision + outcome ledger fills with rich context and structured
+# outcome metrics. Proves the plumbing before any paid Sonnet run.
+
+[experiment]
+name = "roaster_valto_observe_scripted"
+description = "Free scripted economy; Valto observe-mode on roaster_A. Decision+outcome ledger fills at $0 cost."
+
+[run]
+seeds = [0]
+max_days = 20
+
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "heuristic_roaster"
+roaster_B = "heuristic_roaster"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast"]

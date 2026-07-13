@@ -22,7 +22,15 @@ class OpenAIModel:
         self.last_input_tokens = 0
         self.max_input_tokens = self.DEFAULT_MAX_INPUT_TOKENS
         self.model = model
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=300.0)
+        # timeout=180s catches a stalled connection in 3 min (legit calls, even
+        # with long context, finish in seconds). max_retries=0 disables the SDK's
+        # OWN silent internal retries — otherwise a hung socket is retried up to
+        # 3× the timeout (~15 min) invisibly before our `call_with_retry` (which
+        # logs + backs off + reschedules) ever sees it. Observed as a 13-min
+        # dead hang on a long CoffeeBench run.
+        self.client = OpenAI(
+            api_key=os.getenv("OPENAI_API_KEY"), timeout=180.0, max_retries=0
+        )
         self._skip_temperature = False
         self._skip_reasoning = False
         self.reasoning_effort = "high" if enable_thinking else "low"
@@ -30,12 +38,25 @@ class OpenAIModel:
         self.temperature = 0.0
         self.pricing = {
             "gpt-5.5": {"input": 5.00, "cached_input": 0.50, "output": 30.00},
+            # gpt-5.4-mini — cheaper than Haiku ($1/$5) and the model the Valto
+            # benchmarks (taskmarket/vending) used, so it's proven on this task.
+            "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.50},
         }
 
     def _completion_cost(
         self, non_cached_input_tokens, cached_input_tokens, output_tokens
     ) -> float:
-        p = self.pricing[self.model]
+        # Graceful: an unknown model id must NOT crash a paid run — fall back to
+        # gpt-5.4-mini rates and warn once.
+        p = self.pricing.get(self.model)
+        if p is None:
+            if not getattr(self, "_warned_pricing", False):
+                print(
+                    f"[openai] WARN: no pricing entry for '{self.model}'; using "
+                    f"gpt-5.4-mini fallback rates. Add it to self.pricing for exact cost."
+                )
+                self._warned_pricing = True
+            p = {"input": 0.75, "cached_input": 0.075, "output": 4.50}
         return (
             non_cached_input_tokens * p["input"]
             + cached_input_tokens * p["cached_input"]

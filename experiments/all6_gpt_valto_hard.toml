@@ -1,0 +1,39 @@
+# HARD-MODE all-gpt economy — makes the roaster's decisions (esp. PRICING)
+# genuinely difficult, so even a capable agent makes learnable, net-negative
+# mistakes Valto can catch. Two levers:
+#
+#   A. Thin + elastic commodity margins: consumer reservation for roasted
+#      commodity drops $30 -> $20, right near the agent's price point, so demand
+#      is now steeply price-sensitive — over-pricing craters volume (and share
+#      flips to roaster_B), under-pricing throws away thin margin. (Specialty
+#      reservation stays premium so that tier remains viable — makes the
+#      commodity/specialty MIX decision interesting too.)
+#   B. Perishable inventory: spoilage 0.5% -> 3%/day. Pricing becomes a
+#      CLEARANCE problem — hold out for a better price and it rots; over-price ->
+#      unsold -> spoils (double penalty). Also forces smaller, more frequent
+#      buy/roast decisions -> more decision volume in 45 days.
+#
+# All 6 agents on gpt-5.4-mini (proven, cheap, no throttling). Valto observes
+# roaster_A's full surface (buy/produce/list/sell) and logs context + real
+# intent + realized margin outcomes. 90-day horizon; we stop + checkpoint at 45.
+
+[experiment]
+name = "all6_gpt_valto_hard"
+description = "HARD-mode all-gpt economy (thin/elastic commodity margins + perishable inventory); Valto observe on roaster_A."
+
+[run]
+seeds = [0]
+max_days = 90
+
+[economy]
+p_res_commodity = 20.0            # A: commodity roasted reservation $30 -> $20 (thin, elastic)
+inventory_spoilage_per_day = 0.03 # B: 0.5% -> 3%/day (perishable → pricing = clearance)
+
+[models]
+default = "gpt-5.4-mini"
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast", "post_listing", "accept_offer"]

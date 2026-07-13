@@ -2,7 +2,6 @@
 
 import json
 import os
-import uuid
 from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime
@@ -34,6 +33,11 @@ from coffeebench.typings import Invoice, JournalEntry
 from coffeebench.business_app import BusinessApp
 from coffeebench.marketplace import Marketplace
 from coffeebench.typings import Deal
+
+
+# Checkpoint format version. Bumped on any breaking change to the on-disk
+# checkpoint schema; `load_checkpoint` refuses to load a mismatched version.
+CHECKPOINT_SCHEMA_VERSION = 1
 
 
 # Business hours that bound each simulated day (in minutes from midnight).
@@ -273,6 +277,22 @@ class Environment:
         self._main_agent_id: Optional[str] = main_agent_id
         self._terminated_early: Optional[dict] = None
 
+        # ---- checkpoint / resume state ----
+        # `_is_resume` gates the one-time run() bootstrap (agent.init, demand /
+        # loyalty RNG draws, day-0 event scheduling): a resumed env restores all
+        # of that from the checkpoint instead of regenerating it.
+        self._is_resume: bool = False
+        # When set, run() saves a checkpoint at the START of this day (after the
+        # previous day's EOD mechanics, before this day's MORNING_OPEN) and
+        # stops. See save_checkpoint / docs for the exact boundary semantics.
+        self._checkpoint_at_day: Optional[int] = None
+        self._checkpoint_out: Optional[str] = None
+        self._checkpoint_saved: bool = False
+        # Run-identity metadata for the checkpoint header (config source, seed,
+        # model map, economy overrides, branch lineage). Populated by build_run /
+        # load_checkpoint.
+        self._run_meta: dict = {}
+
         # ---- Phase 2 event-driven scheduler state ----
         # Heap-backed priority queue of all scheduled events
         # (MORNING_OPEN / EOD_MECHANICS / AGENT_WAKE / PARTNER_DM /
@@ -394,6 +414,11 @@ class Environment:
         self.marketplace.business_apps = business_apps
         self.marketplace.on_deal_accepted = self._on_deal_accepted
         self.marketplace._env = self  # back-ref so BusinessApp can call env helpers
+        # Share the marketplace's deterministic ID generator so invoices and
+        # journal entries minted env-side draw from the same monotonic counter
+        # namespace as listings/offers/deals/messages. A single shared
+        # instance means one counter to checkpoint and restore.
+        self.id_gen = self.marketplace.id_gen
 
         # Wire truth-ledger hook on each business app + a back-reference
         # so `_compute_true_equity` can read pending-production /
@@ -424,7 +449,7 @@ class Environment:
         reference: str | None = None,
     ) -> None:
         entry = JournalEntry(
-            id=str(uuid.uuid4())[:8],
+            id=self.id_gen.next("je"),
             day=self.time_manager.get_current_day(),
             trader_id=agent_id,
             entry_type=entry_type,
@@ -857,7 +882,7 @@ class Environment:
             issue_day = deal.delivery_at // 1440
             due_day = issue_day + deal.payment_terms_days
             invoice = Invoice(
-                id=str(uuid.uuid4())[:8],
+                id=self.id_gen.next("inv"),
                 issuer=seller.agent_id,
                 payer=buyer.agent_id,
                 amount=deal.total_price,
@@ -2057,39 +2082,83 @@ class Environment:
         """
         import asyncio
 
-        for agent in self.agents.values():
-            agent.init()
-        self._generate_demand_paths()
-        self._generate_loyalty_multipliers()
-        self._emit(
-            "run_start",
-            agent_ids=list(self.agents.keys()),
-            max_days=self.max_days,
-            models={aid: a.model.model for aid, a in self.agents.items()},
-            demand_paths=dict(self._demand_path),
-            retailer_loyalty=dict(self._retailer_loyalty),
-        )
-        if self.verbose:
-            print(
-                f"[env] Starting deal run, max_days={self.max_days}, agents={list(self.agents.keys())}"
+        if self._is_resume:
+            # RESUME path: agent transcripts, demand/loyalty paths, RNG state,
+            # and the full event queue were all restored from the checkpoint.
+            # Re-attach only the out-of-band system prompt (lives on the fresh
+            # per-branch model client, not in the restored transcript); do NOT
+            # regenerate RNG-consuming state or re-seed the day-0 bootstrap.
+            for agent in self.agents.values():
+                agent.init(seed_initial=False)
+            self._emit(
+                "run_resume",
+                agent_ids=list(self.agents.keys()),
+                max_days=self.max_days,
+                resume_day=int(self.time_manager.get_current_day()),
+                models={aid: a.model.model for aid, a in self.agents.items()},
+                branch=self._run_meta.get("branch_name"),
             )
+            if self.verbose:
+                print(
+                    f"[env] RESUMING run at day "
+                    f"{self.time_manager.get_current_day()}, "
+                    f"max_days={self.max_days}, "
+                    f"branch={self._run_meta.get('branch_name')}"
+                )
+        else:
+            for agent in self.agents.values():
+                agent.init()
+            self._generate_demand_paths()
+            self._generate_loyalty_multipliers()
+            self._emit(
+                "run_start",
+                agent_ids=list(self.agents.keys()),
+                max_days=self.max_days,
+                models={aid: a.model.model for aid, a in self.agents.items()},
+                demand_paths=dict(self._demand_path),
+                retailer_loyalty=dict(self._retailer_loyalty),
+            )
+            if self.verbose:
+                print(
+                    f"[env] Starting deal run, max_days={self.max_days}, agents={list(self.agents.keys())}"
+                )
 
-        # Bootstrap: schedule day 0 MORNING_OPEN + EOD_MECHANICS. Each
-        # EOD handler chains the next day's pair, so the loop runs out
-        # naturally when day = max_days.
-        self.event_loop.schedule_at(
-            BUSINESS_HOURS_START,
-            EVENT_MORNING_OPEN,
-            payload={"day": 0},
-        )
-        self.event_loop.schedule_at(
-            BUSINESS_HOURS_END,
-            EVENT_EOD_MECHANICS,
-            payload={"day": 0},
-        )
+            # Bootstrap: schedule day 0 MORNING_OPEN + EOD_MECHANICS. Each
+            # EOD handler chains the next day's pair, so the loop runs out
+            # naturally when day = max_days.
+            self.event_loop.schedule_at(
+                BUSINESS_HOURS_START,
+                EVENT_MORNING_OPEN,
+                payload={"day": 0},
+            )
+            self.event_loop.schedule_at(
+                BUSINESS_HOURS_END,
+                EVENT_EOD_MECHANICS,
+                payload={"day": 0},
+            )
 
         max_vt = self.max_days * 1440
         while self.event_loop:
+            # Checkpoint boundary: the next event to fire is the requested
+            # day's MORNING_OPEN, i.e. the previous day's EOD mechanics have
+            # completed and this day has not started. Save and stop here so
+            # a resume begins cleanly at this day's morning.
+            if (
+                self._checkpoint_at_day is not None
+                and not self._checkpoint_saved
+            ):
+                nxt = self.event_loop.peek()
+                if (
+                    nxt is not None
+                    and nxt.kind == EVENT_MORNING_OPEN
+                    and int(nxt.payload.get("day", -1)) == self._checkpoint_at_day
+                ):
+                    self.save_checkpoint(self._checkpoint_out)
+                    self._checkpoint_saved = True
+                    if self.event_logger is not None:
+                        self.event_logger.close()
+                    return {"checkpoint_saved_at_day": self._checkpoint_at_day}
+
             if self._terminated_early is not None:
                 if self.verbose:
                     print(
@@ -2778,6 +2847,161 @@ class Environment:
             "inventory_by_item": inv_by_item,
             "bs_source": bs_source,
         }
+
+    # ----- checkpoint serialization -----
+    def save_checkpoint(self, path: str) -> None:
+        """Serialize the COMPLETE runtime state to a portable, versioned JSON
+        checkpoint from which a fresh process can resume or branch.
+
+        Unlike `save_trajectory` (an analysis artifact), this preserves every
+        piece of state needed for faithful continuation: the clock and event
+        queue, RNG + demand paths + loyalty, the marketplace, per-agent books,
+        all pending processes, the truth ledger + history, and each agent's
+        transcript + scripted-model internal state. Shared objects (Invoices in
+        AR/AP, Deals in marketplace.deals + pending shipments) are stored in a
+        pool and referenced by id so sharing is reconstructed exactly on load.
+        """
+        from coffeebench.models import is_scripted_model
+
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+        # --- shared invoice pool (AR of issuer + AP of payer share objects) ---
+        invoice_pool: dict[str, dict] = {}
+        for ba in self.business_apps.values():
+            for inv in list(ba.accounts_receivable) + list(ba.accounts_payable):
+                invoice_pool.setdefault(inv.id, asdict(inv))
+
+        # --- per-agent business + agent state ---
+        agents_state: dict[str, dict] = {}
+        for aid, ba in self.business_apps.items():
+            agent = self.agents.get(aid)
+            model = getattr(agent, "model", None)
+            scripted = model is not None and is_scripted_model(model.model)
+            model_state = None
+            if scripted and hasattr(model, "checkpoint_state"):
+                model_state = model.checkpoint_state()
+            compactor = getattr(agent, "compactor", None)
+            compactor_events = None
+            if compactor is not None:
+                compactor_events = [
+                    {
+                        "triggered_at_tokens": ev.triggered_at_tokens,
+                        "middle_start": ev.middle_start,
+                        "middle_end": ev.middle_end,
+                        "middle_msg_count": ev.middle_msg_count,
+                        "summary_chars": ev.summary_chars,
+                    }
+                    for ev in getattr(compactor, "events", [])
+                ]
+            agents_state[aid] = {
+                "role": ba.role,
+                "display_name": ba.display_name,
+                # --- books ---
+                "cash": ba.cash,
+                "inventory": dict(ba.inventory),
+                "inventory_total_cost": dict(ba.inventory_total_cost),
+                "retail_prices": dict(ba.retail_prices),
+                "accounts_receivable": [inv.id for inv in ba.accounts_receivable],
+                "accounts_payable": [inv.id for inv in ba.accounts_payable],
+                "initial_equity": ba.initial_equity,
+                # --- agent transcript + model ---
+                "model": getattr(model, "model", None),
+                "messages": (agent.messages if agent is not None else []),
+                "usage": {
+                    "n_calls": int(getattr(model, "n_calls", 0) or 0),
+                    "cost": float(getattr(model, "cost", 0.0) or 0.0),
+                    "total_input_tokens": int(
+                        getattr(model, "total_input_tokens", 0) or 0
+                    ),
+                    "total_output_tokens": int(
+                        getattr(model, "total_output_tokens", 0) or 0
+                    ),
+                    "last_input_tokens": int(
+                        getattr(model, "last_input_tokens", 0) or 0
+                    ),
+                },
+                "scripted_model_state": model_state,
+                "compactor_events": compactor_events,
+            }
+
+        # --- RNG state (tuple → JSON-safe lists; rebuilt exactly on load) ---
+        rng_state = self.rng.getstate()
+
+        data = {
+            # ===== identity / compatibility =====
+            "schema_version": CHECKPOINT_SCHEMA_VERSION,
+            "coffeebench_version": self._run_meta.get("coffeebench_version", "0.1.0"),
+            "run_meta": dict(self._run_meta),
+            "max_days": self.max_days,
+            "main_agent_id": self._main_agent_id,
+            # Beginning-of-day boundary: days [0, next_day-1] complete.
+            "next_day": int(self.time_manager.get_current_day()),
+            "next_virtual_min": int(self.time_manager.virtual_min),
+            "saved_at": datetime.now().isoformat(),
+            # ===== clock + scheduler =====
+            "event_loop": self.event_loop.get_state(),
+            "available_at": dict(self._available_at),
+            "pending_wake_reason": dict(self._pending_wake_reason),
+            "last_active_day_per_agent": dict(self._last_active_day_per_agent),
+            "eod_done_for_day": sorted(self._eod_done_for_day),
+            "today_nudge": self._today_nudge,
+            "step_count": self.step_count,
+            # ===== RNG / exogenous paths =====
+            "rng_state": rng_state,
+            "demand_path": {k: list(v) for k, v in self._demand_path.items()},
+            "retailer_loyalty": dict(getattr(self, "_retailer_loyalty", {}) or {}),
+            "spoilage_carry": {
+                aid: dict(carry) for aid, carry in self._spoilage_carry.items()
+            },
+            # ===== marketplace =====
+            "marketplace": {
+                "items": {iid: asdict(it) for iid, it in self.marketplace.items.items()},
+                "listings": [asdict(lt) for lt in self.marketplace.listings],
+                "offers": [asdict(o) for o in self.marketplace.offers],
+                "deals": [asdict(d) for d in self.marketplace.deals],
+                "messages": [asdict(m) for m in self.marketplace.messages],
+                "read_message_ids": {
+                    aid: sorted(ids)
+                    for aid, ids in self.marketplace._read_message_ids.items()
+                },
+                "id_gen": self.id_gen.state(),
+            },
+            # ===== shared invoice pool =====
+            "invoices": invoice_pool,
+            # ===== per-agent business + agent state =====
+            "agents": agents_state,
+            # ===== pending processes =====
+            "pending_shipments": [d.id for d in self._pending_shipments],
+            "pending_production": [dict(p) for p in self._pending_production],
+            "pending_roasting": [dict(r) for r in self._pending_roasting],
+            "production_used_today": dict(self._production_used_today),
+            "roast_used_today": dict(self._roast_used_today),
+            # ===== accounting + history =====
+            "truth_ledger": {
+                aid: [asdict(e) for e in entries]
+                for aid, entries in self.truth_ledger.items()
+            },
+            "daily_stats": self.daily_stats,
+            "consumer_sales_log": list(self.consumer_sales_log),
+            "messages_today": dict(self._messages_today),
+            "messages_per_day": {
+                aid: dict(per) for aid, per in self._messages_per_day.items()
+            },
+            # ===== bankruptcy / termination =====
+            "bankrupt_agents": sorted(self._bankrupt_agents),
+            "bankrupt_day": dict(self._bankrupt_day),
+            "bankrupt_reason": dict(self._bankrupt_reason),
+            "bankrupt_equity": dict(self._bankrupt_equity),
+            "terminated_early": self._terminated_early,
+        }
+
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+        if self.verbose:
+            print(
+                f"[env] Checkpoint saved to {path} "
+                f"(beginning of day {data['next_day']})"
+            )
 
     def save_trajectory(self, path: str) -> None:
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

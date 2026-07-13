@@ -1,0 +1,30 @@
+# All six agents on Claude Haiku 4.5 — a fully-live heterogeneous multi-agent
+# economy (the CoffeeBench setting proper). Valto observes/logs roaster_A's full
+# decision surface (buy/produce/list/sell). Unlike the 1-Haiku+5-scripted setup,
+# every counterparty here is a real LLM: the demand curve, competition, and
+# pricing dynamics roaster_A faces are EMERGENT, not scripted.
+#
+# Trade-off (documented in VALTO_EXPERIMENT_PLAN.md): richer/realistic data, but
+# LLM non-determinism across all 6 agents weakens the clean paired governed-vs-
+# baseline comparison — the enforcement experiment would need multiple seeds.
+# For raw-data collection + realism this is the better setting.
+#
+# No main_agent: run the full window even if an agent struggles.
+
+[experiment]
+name = "all6_haiku_valto"
+description = "All 6 agents on Haiku 4.5 (live multi-agent economy); Valto observe on roaster_A over buy/produce/list/sell."
+
+[run]
+seeds = [0]
+max_days = 90
+
+[models]
+default = "claude-haiku-4-5"
+# every agent (farmers, roasters, retailers) on Haiku via the default above
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast", "post_listing", "accept_offer"]

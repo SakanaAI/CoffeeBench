@@ -1,10 +1,10 @@
 """Marketplace — shared, environment-owned state for the deal benchmark."""
 
 import threading
-import uuid
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Callable, Optional
 
+from coffeebench.ids import IdGenerator
 from coffeebench.time_manager import TimeManager
 from coffeebench.typings import Deal, Invoice, Item, Listing, Message, Offer
 
@@ -15,6 +15,11 @@ if TYPE_CHECKING:
 class Marketplace:
     def __init__(self, time_manager: TimeManager) -> None:
         self.time_manager = time_manager
+        # Deterministic ID generator, shared with the Environment (which
+        # re-points its own reference at this instance in Environment.__init__)
+        # so listings/offers/deals/messages/invoices/journal-entries all draw
+        # from a single monotonic, checkpoint-restorable counter namespace.
+        self.id_gen = IdGenerator()
         self.items: dict[str, Item] = {}  # item_id -> Item
         self.listings: list[Listing] = []
         self.offers: list[Offer] = []
@@ -57,7 +62,7 @@ class Marketplace:
     ) -> Listing:
         with self.lock:
             listing = Listing(
-                id="lst_" + str(uuid.uuid4())[:8],
+                id=self.id_gen.next("lst"),
                 seller_id=seller_id,
                 item_id=item_id,
                 qty=int(qty),
@@ -93,7 +98,7 @@ class Marketplace:
             # farmer accepts, and the deal lands at e.g. 30 kg — bypassing
             # the bulk-breaker moat entirely.
             offer = Offer(
-                id="off_" + str(uuid.uuid4())[:8],
+                id=self.id_gen.next("off"),
                 listing_id=listing_id,
                 buyer_id=buyer_id,
                 seller_id=listing.seller_id,
@@ -189,7 +194,7 @@ class Marketplace:
             total = round(offer.offered_price * offer.qty, 2)
 
             deal = Deal(
-                id="dl_" + str(uuid.uuid4())[:8],
+                id=self.id_gen.next("dl"),
                 listing_id=listing.id,
                 offer_id=offer.id,
                 seller_id=offer.seller_id,
@@ -237,7 +242,7 @@ class Marketplace:
     ) -> Message:
         with self.lock:
             msg = Message(
-                id="msg_" + str(uuid.uuid4())[:8],
+                id=self.id_gen.next("msg"),
                 sender_id=sender_id,
                 recipient_id=recipient_id,
                 title=title,

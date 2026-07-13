@@ -68,27 +68,41 @@ class Agent:
         }
         self.messages.append(msg)
 
-    def init(self):
+    def init(self, seed_initial: bool = True):
         """Bootstrap the conversation. Anthropic and Gemini (native
         SDK) carry the system prompt out-of-band on
         `model.system_prompt`; OpenAI carries it as a `developer`
-        message and OpenRouter as a `system` message."""
+        message and OpenRouter as a `system` message.
+
+        `seed_initial=False` is the RESUME path: the transcript
+        (including any developer/system prompt message AND the initial
+        observation) is being restored from a checkpoint, so we must NOT
+        re-append those messages. We still (re)attach the out-of-band
+        `model.system_prompt` for the providers that carry it that way,
+        because that lives on the fresh per-branch model client, not in
+        the restored message list.
+        """
+        from coffeebench.models import is_scripted_model
+
         m = self.model.model
-        if m in ("passive", "heuristic_roaster"):
+        if is_scripted_model(m):
             # Scripted-policy models never read the system prompt; skip routing.
             pass
         elif m.startswith("claude-"):
             self.model.system_prompt = self.system_prompt
         elif m.startswith("gpt-"):
-            self.add_message("developer", self.system_prompt)
+            if seed_initial:
+                self.add_message("developer", self.system_prompt)
         elif m.startswith("gemini-"):
             self.model.system_prompt = self.system_prompt
         elif "/" in m:
             # OpenRouter slugs (e.g. moonshotai/kimi-k2.6).
-            self.add_message("system", self.system_prompt)
+            if seed_initial:
+                self.add_message("system", self.system_prompt)
         else:
             raise ValueError(f"Unsupported model: {m}")
-        self.add_message("user", self.user_prompt)
+        if seed_initial:
+            self.add_message("user", self.user_prompt)
 
     def step_query(self) -> ModelResponse:
         """Phase 1 of step(): run compaction check + the LLM call. Does

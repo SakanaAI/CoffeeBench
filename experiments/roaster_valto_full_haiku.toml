@@ -1,0 +1,40 @@
+# Instrumentation run — ORIGINAL system prompt (no KPI pressure), Valto in
+# OBSERVE mode (approve-all, log-only), governing/logging the FULL Option-1
+# decision surface on roaster_A:
+#
+#   make_offer    → buy green      (procurement price/qty)
+#   roast         → produce        (volume + commodity/specialty mix)
+#   post_listing  → list roasted   (the SELL price — margin engine)
+#   accept_offer  → sell roasted   (execute the sale)
+#
+# Purpose: produce a clean, rich raw dataset (decision context + the agent's
+# actual stated intent + realized margin-centric outcomes) for offline analysis
+# of where Valto should govern to be economically POSITIVE. No enforcement here —
+# this is pure instrumentation. Outputs `valto_decisions.csv` / `.jsonl` next to
+# the ledger.
+#
+# 1 Haiku focal + 5 scripted counterparties keeps it cheap (~$10 for 90 days) and
+# isolates the focal agent. No main_agent (run the full window regardless).
+
+[experiment]
+name = "roaster_valto_full_haiku"
+description = "Original-prompt Haiku roaster_A + 5 scripted; Valto observe over buy/produce/list/sell. Raw data for offline analysis."
+
+[run]
+seeds = [0]
+max_days = 90
+
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "claude-haiku-4-5"
+roaster_B = "heuristic_roaster"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"
+
+[valto]
+enabled = true
+actor = "roaster_A"
+mode = "observe"
+govern_tools = ["make_offer", "roast", "post_listing", "accept_offer"]
