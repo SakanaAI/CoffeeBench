@@ -637,7 +637,9 @@ def build_run(
     else:
         max_days = args.max_days if args.max_days is not None else 90
         seed = args.seed
-        cli_default_model = args.model if args.model is not None else "claude-haiku-4-5"
+        cli_default_model = (
+            args.model if args.model is not None else "claude-haiku-4-5:off"
+        )
         agent_model_overrides = {}
     if args.models:
         for kv in args.models.split(","):

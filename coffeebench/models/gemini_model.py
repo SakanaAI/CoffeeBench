@@ -19,11 +19,22 @@ load_dotenv()
 class GeminiModel:
     DEFAULT_MAX_INPUT_TOKENS = 200_000
 
+    # Maps our reasoning-effort vocabulary onto Gemini 3's `thinking_level`
+    # (Gemini 3 dropped token-budget control). Pro accepts low/high; Flash
+    # also accepts medium — pick an effort level the target model supports.
+    _EFFORT_LEVEL = {
+        "minimal": "low",
+        "low": "low",
+        "medium": "medium",
+        "high": "high",
+        "xhigh": "high",
+        "max": "high",
+    }
+
     def __init__(
         self,
         model: str = "gemini-3.1-pro-preview",
-        enable_thinking: bool = False,
-        thinking_budget: int = -1,  # -1 = dynamic / "let the model decide"
+        effort: str | None = None,
     ):
         self.cost = 0.0
         self.n_calls = 0
@@ -45,15 +56,22 @@ class GeminiModel:
         )
         self.max_tokens = 4096
         self.temperature = 0.0
-        self.enable_thinking = bool(enable_thinking)
-        # `-1` is genai's sentinel for "dynamic" thinking budget;
-        # anything > 0 caps the thoughts token budget at that value.
-        # NOTE: Gemini 3.x is thinking-required and rejects
-        # `thinking_budget=0` ("Budget 0 is invalid"); when the user
-        # opts out of thinking we still send -1 (dynamic) but with
-        # `include_thoughts=False` so the response.thinking is empty
-        # and the model spends minimal latency on chain-of-thought.
-        self.thinking_budget = int(thinking_budget)
+        # Temperature is always left at the provider default (never sent).
+        # `effort` (the `gemini-3.1-pro-preview:high` model-string suffix) maps
+        # to Gemini 3's `thinking_level`. Gemini 3 is thinking-required and
+        # can't be fully disabled, so `off` maps to the lowest level ("low")
+        # with thoughts hidden. None (direct construction only) → send no
+        # `thinking_config`, leaving the model's default level.
+        self.effort = effort
+        if effort == "off":
+            self.thinking_level = "low"
+            self._include_thoughts = False
+        elif effort:
+            self.thinking_level = self._EFFORT_LEVEL.get(effort, "high")
+            self._include_thoughts = True
+        else:
+            self.thinking_level = None
+            self._include_thoughts = False
         self.system_prompt: str | None = None
         self.pricing = {
             "gemini-3-pro-preview": {
@@ -201,13 +219,13 @@ class GeminiModel:
         genai_tools = self._tools_to_genai(tools)
 
         cfg_kwargs: dict[str, Any] = {
-            "temperature": self.temperature,
             "max_output_tokens": self.max_tokens,
-            "thinking_config": genai_types.ThinkingConfig(
-                include_thoughts=self.enable_thinking,
-                thinking_budget=self.thinking_budget,
-            ),
         }
+        if self.thinking_level is not None:
+            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                include_thoughts=self._include_thoughts,
+                thinking_level=self.thinking_level,
+            )
         if self.system_prompt:
             cfg_kwargs["system_instruction"] = self.system_prompt
         if genai_tools:
@@ -316,17 +334,13 @@ class GeminiModel:
         content: str,
         max_tokens: int = 4096,
     ) -> str:
+        # Summarization is a low-creativity compression task: leave thinking at
+        # the provider default and keep thoughts out of the response so the
+        # summary stays terse. Temperature is left at the provider default.
         cfg = genai_types.GenerateContentConfig(
-            temperature=self.temperature,
             max_output_tokens=int(max_tokens),
             system_instruction=instructions,
-            # Gemini 3.x requires thinking mode (budget != 0) — passing
-            # budget=0 returns 400. Use dynamic budget with thoughts
-            # hidden from the response so the summary stays terse.
-            thinking_config=genai_types.ThinkingConfig(
-                include_thoughts=False,
-                thinking_budget=-1,
-            ),
+            thinking_config=genai_types.ThinkingConfig(include_thoughts=False),
         )
         contents = [
             genai_types.Content(

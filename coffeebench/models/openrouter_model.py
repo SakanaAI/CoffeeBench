@@ -15,8 +15,24 @@ load_dotenv()
 class OpenRouterModel:
     DEFAULT_MAX_INPUT_TOKENS = 200_000
 
+    # Each model is served only by its official upstream provider. When no
+    # provider is pinned explicitly we auto-pin the official one, so OpenRouter
+    # never silently routes to a cheaper third-party host. Pricing below is the
+    # official provider's rate.
+    OFFICIAL_PROVIDER = {
+        "moonshotai/kimi-k2.6": "moonshotai",
+        "z-ai/glm-5.1": "z-ai",
+        "z-ai/glm-5.2": "z-ai",
+        "openai/gpt-5.5": "openai",
+        "qwen/qwen3.7-max": "alibaba",
+        "minimax/minimax-m3": "minimax",
+    }
+
     def __init__(
-        self, model: str = "moonshotai/kimi-k2.6", enable_thinking: bool = False
+        self,
+        model: str = "moonshotai/kimi-k2.6",
+        effort: str | None = None,
+        provider: str | None = None,
     ):
         self.cost = 0.0
         self.n_calls = 0
@@ -25,6 +41,19 @@ class OpenRouterModel:
         self.last_input_tokens = 0
         self.max_input_tokens = self.DEFAULT_MAX_INPUT_TOKENS
         self.model = model
+        # Pin routing to the official upstream provider (explicit `@provider`
+        # wins; otherwise auto-pin), forcing `only: [provider]` with fallbacks
+        # disabled so the run is served by the official host — not whichever
+        # third-party OpenRouter would pick by price.
+        self.provider = provider or self.OFFICIAL_PROVIDER.get(model)
+        extra: dict = {}
+        if self.provider:
+            extra["provider"] = {"only": [self.provider], "allow_fallbacks": False}
+        # `off` explicitly disables the upstream reasoning channel (GLM/Kimi
+        # default to reasoning ON, so we must say so rather than just omit it).
+        if effort == "off":
+            extra["reasoning"] = {"enabled": False}
+        self._extra_body = extra or None
         self.client = OpenAI(
             api_key=os.getenv("OPENROUTER_API_KEY"),
             base_url="https://openrouter.ai/api/v1",
@@ -32,30 +61,35 @@ class OpenRouterModel:
         )
         self.max_tokens = 4096
         self.temperature = 0.0
-        self._skip_temperature = False
-        # When `enable_thinking=False` we don't send `reasoning_effort` at
-        # all (consistent with the other providers' "thinking off" path).
-        # Setting it to "low" / "medium" still routes the model into a
-        # reasoning channel that consumes max_tokens silently. With
-        # `_skip_reasoning_effort=True` the kwarg is omitted entirely.
-        self._skip_reasoning_effort = not bool(enable_thinking)
-        self.reasoning_effort = "high" if enable_thinking else "low"
-        # Pricing per 1M tokens. OpenRouter exposes per-model rates at
-        # /api/v1/models — values below match those snapshotted on
-        # 2026-05-05. cached_input is the input_cache_read rate (which
-        # is materially cheaper than the regular prompt rate for these
-        # models, so cost-tracking depends on it).
+        # Temperature is always left at the provider default (never sent).
+        # `effort` (the `z-ai/glm-5.2:high` model-string suffix) is forwarded as
+        # `reasoning_effort` for real levels; `off` disables reasoning via
+        # extra_body (above) and sends no `reasoning_effort`. None (direct
+        # construction only) → send nothing.
+        self._skip_temperature = True
+        self._skip_reasoning_effort = effort in (None, "off")
+        self.reasoning_effort = effort
+        # Pricing per 1M tokens for each model's official provider. cached_input
+        # is the input_cache_read rate. Snapshotted on 2026-06-30.
         self.pricing = {
             "moonshotai/kimi-k2.6": {
-                "input": 0.74,
-                "cached_input": 0.14,
-                "output": 3.49,
+                "input": 0.95,
+                "cached_input": 0.16,
+                "output": 4.00,
             },
-            "z-ai/glm-5.1": {"input": 1.05, "cached_input": 0.525, "output": 3.50},
+            "z-ai/glm-5.1": {"input": 1.40, "cached_input": 0.26, "output": 4.40},
+            "z-ai/glm-5.2": {"input": 1.40, "cached_input": 0.26, "output": 4.40},
+            # Official OpenAI (standard tier) rate for gpt-5.5 on OpenRouter.
+            "openai/gpt-5.5": {"input": 5.00, "cached_input": 0.50, "output": 30.00},
+            # Neutral background candidates (non-overlapping families) for the
+            # family-confound ablation.
+            "qwen/qwen3.7-max": {"input": 1.475, "cached_input": 0.295, "output": 4.425},
+            "minimax/minimax-m3": {"input": 0.30, "cached_input": 0.06, "output": 1.20},
         }
+        self._price_key = model
 
     def _completion_cost(self, non_cached, cached, output) -> float:
-        p = self.pricing[self.model]
+        p = self.pricing[self._price_key]
         return (
             non_cached * p["input"] + cached * p["cached_input"] + output * p["output"]
         ) / 1_000_000
@@ -132,6 +166,8 @@ class OpenRouterModel:
             kwargs["temperature"] = self.temperature
         if not self._skip_reasoning_effort:
             kwargs["reasoning_effort"] = self.reasoning_effort
+        if self._extra_body:
+            kwargs["extra_body"] = self._extra_body
         chat_tools = self._tools_to_chatcompletions(tools)
         if chat_tools:
             kwargs["tools"] = chat_tools
@@ -235,6 +271,8 @@ class OpenRouterModel:
         }
         if not self._skip_temperature:
             kwargs["temperature"] = self.temperature
+        if self._extra_body:
+            kwargs["extra_body"] = self._extra_body
 
         def _do_call():
             try:

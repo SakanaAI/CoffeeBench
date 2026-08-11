@@ -17,8 +17,7 @@ class AnthropicModel:
     def __init__(
         self,
         model: str = "claude-sonnet-4-6",
-        enable_thinking: bool = False,
-        thinking_budget_tokens: int = 4096,
+        effort: str | None = None,
     ):
         self.cost = 0.0
         self.n_calls = 0
@@ -28,17 +27,22 @@ class AnthropicModel:
         self.max_input_tokens = self.DEFAULT_MAX_INPUT_TOKENS
         self.model = model
         self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=300.0)
-        # max_tokens reserves room for the visible output. With legacy
-        # `thinking={enabled, budget}`, Anthropic requires
-        # max_tokens > budget — we size accordingly in query().
+        # max_tokens reserves room for the visible output.
         self.max_tokens = 4096
         self.temperature = 0.0
-        # Anthropic forces temperature=1.0 with extended thinking, and
-        # newer models (Opus 4.7) deprecate the temperature param entirely.
-        # Skip temperature whenever thinking is on.
-        self._skip_temperature = bool(enable_thinking)
-        self._skip_thinking = not bool(enable_thinking)
-        self.thinking_budget_tokens = int(thinking_budget_tokens)
+        # Temperature is always left at the provider default (never sent) — on
+        # Opus 4.7+ it is rejected outright. Thinking is opt-in via `effort`
+        # (the `claude-opus-4-8:high` model-string suffix): Claude 4.6+ uses
+        # *adaptive* thinking whose depth is set by `output_config.effort`
+        # (low|medium|high|xhigh|max) — an explicit `budget_tokens` is no longer
+        # accepted. When effort is None we send neither `thinking` nor
+        # `output_config`, so the model runs with thinking off (its default).
+        self._skip_temperature = True
+        self.effort = effort
+        # `off` (and no effort) → thinking fully disabled (Claude 4.7+ runs with
+        # thinking off when no `thinking` field is sent). Any real level →
+        # adaptive thinking at that effort.
+        self._skip_thinking = effort in (None, "off")
         self.system_prompt: str | None = None
 
         self.pricing = {
@@ -47,6 +51,12 @@ class AnthropicModel:
                 "cache_write": 3.75,
                 "cache_read": 0.30,
                 "output": 15.00,
+            },
+            "claude-opus-4-8": {
+                "input": 5.00,
+                "cache_write": 6.25,
+                "cache_read": 0.50,
+                "output": 25.00,
             },
             "claude-opus-4-7": {
                 "input": 5.00,
@@ -192,28 +202,19 @@ class AnthropicModel:
                     cloned[-1]["cache_control"] = {"type": "ephemeral"}
                 formatted_messages[-1] = {"role": last["role"], "content": cloned}
 
-        # Reserve max_tokens for visible output + (legacy) thinking budget.
-        is_opus_47 = self.model == "claude-opus-4-7"
-        effective_max_tokens = self.max_tokens
-        if not self._skip_thinking and not is_opus_47:
-            effective_max_tokens = self.max_tokens + self.thinking_budget_tokens
-
         kwargs: dict = {
             "model": self.model,
             "messages": formatted_messages,
-            "max_tokens": effective_max_tokens,
+            "max_tokens": self.max_tokens,
         }
         if not self._skip_temperature:
-            kwargs["temperature"] = 1.0 if not self._skip_thinking else self.temperature
+            kwargs["temperature"] = self.temperature
+        # Claude 4.6+ uses adaptive thinking; depth is set by
+        # `output_config.effort`. An explicit `budget_tokens` is rejected, so
+        # there is no per-model budget path any more.
         if not self._skip_thinking:
-            if is_opus_47:
-                kwargs["thinking"] = {"type": "adaptive"}
-                kwargs["extra_body"] = {"output_config": {"effort": "high"}}
-            else:
-                kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": self.thinking_budget_tokens,
-                }
+            kwargs["thinking"] = {"type": "adaptive"}
+            kwargs["extra_body"] = {"output_config": {"effort": self.effort}}
         if self.system_prompt:
             kwargs["system"] = [
                 {
@@ -406,7 +407,7 @@ class AnthropicModel:
 
 
 if __name__ == "__main__":
-    m = AnthropicModel(model="claude-sonnet-4-6", enable_thinking=False)
+    m = AnthropicModel(model="claude-sonnet-4-6")
     r = m.query([{"role": "user", "content": "Hello!"}])
     print(r.content)
     print(m.get_usage_stats())

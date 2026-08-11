@@ -22,5 +22,5 @@ seeds = [0]
 max_days = 90
 
 [models]
-default = "claude-sonnet-4-6"
+default = "claude-sonnet-4-6:off"
 roaster_A = "heuristic_roaster"

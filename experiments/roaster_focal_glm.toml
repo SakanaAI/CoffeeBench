@@ -8,5 +8,5 @@ max_days = 90
 main_agent = "roaster_A"
 
 [models]
-default = "claude-sonnet-4-6"
-roaster_A = "z-ai/glm-5.1"
+default = "claude-sonnet-4-6:off"
+roaster_A = "z-ai/glm-5.1:off"

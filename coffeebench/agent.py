@@ -251,7 +251,7 @@ def _stringify_tool_result(result) -> str:
 
 
 if __name__ == "__main__":
-    model = get_model("claude-sonnet-4-6")
+    model = get_model("claude-sonnet-4-6:off")
 
     def check_balance(account_id: int) -> str:
         """Checks the balance of the given account ID."""

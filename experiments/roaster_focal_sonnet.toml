@@ -17,5 +17,5 @@ max_days = 90
 main_agent = "roaster_A"
 
 [models]
-default = "claude-sonnet-4-6"
-roaster_A = "claude-sonnet-4-6"
+default = "claude-sonnet-4-6:off"
+roaster_A = "claude-sonnet-4-6:off"

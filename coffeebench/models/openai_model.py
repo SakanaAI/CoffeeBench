@@ -14,7 +14,7 @@ load_dotenv()
 class OpenAIModel:
     DEFAULT_MAX_INPUT_TOKENS = 200_000
 
-    def __init__(self, model: str = "gpt-5.5", enable_thinking: bool = False):
+    def __init__(self, model: str = "gpt-5.5", effort: str | None = None):
         self.cost = 0.0
         self.n_calls = 0
         self.total_input_tokens = 0
@@ -23,9 +23,14 @@ class OpenAIModel:
         self.max_input_tokens = self.DEFAULT_MAX_INPUT_TOKENS
         self.model = model
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"), timeout=300.0)
-        self._skip_temperature = False
-        self._skip_reasoning = False
-        self.reasoning_effort = "high" if enable_thinking else "low"
+        # Temperature is always left at the provider default (never sent).
+        # `effort` (e.g. "minimal"/"low"/"medium"/"high"/"xhigh", via the
+        # `gpt-5.5:high` model-string suffix) is forwarded as `reasoning.effort`.
+        # OpenAI reasoning models can't be fully disabled, so `off` maps to the
+        # "minimal" floor. None (direct construction only) → send nothing.
+        self._skip_temperature = True
+        self._skip_reasoning = effort is None
+        self.reasoning_effort = "minimal" if effort == "off" else effort
         self.max_tokens = 4096
         self.temperature = 0.0
         self.pricing = {
@@ -254,8 +259,8 @@ class OpenAIModel:
         }
         if not self._skip_temperature:
             kwargs["temperature"] = self.temperature
-        if not self._skip_reasoning:
-            kwargs["reasoning"] = {"effort": self.reasoning_effort}
+        # Summarization is a low-creativity compression task; never spend the
+        # reasoning budget here even when `effort` is set for query().
 
         def _do_call():
             try:
