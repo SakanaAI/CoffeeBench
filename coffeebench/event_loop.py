@@ -25,9 +25,11 @@ TOOL_TIME_COST_MIN: dict[str, int] = {
     # every other agent's, so the dispatcher's bucket-parallel pop
     # continues to collect the full set of live agents instead of
     # fragmenting into 1-2 agent buckets when costs were mixed.
+    "view_dashboard": 30,
     "view_listings": 30,
     "view_offers": 30,
     "view_deals": 30,
+    "view_inventory": 30,
     "view_messages": 30,
     "view_payables": 30,
     "view_receivables": 30,
@@ -38,6 +40,8 @@ TOOL_TIME_COST_MIN: dict[str, int] = {
     "make_offer": 30,
     "accept_offer": 30,
     "withdraw_offer": 30,
+    "reject_offer": 30,
+    "cancel_listing": 30,
     "send_message": 30,
     "produce_item": 30,
     "roast": 30,
@@ -227,6 +231,14 @@ class EventLoop:
             bucket.append((counter, ev))
         bucket.sort(key=lambda x: x[0])
         return [ev for _, ev in bucket]
+
+    def peek_bucket(self) -> list[Event]:
+        """The events `pop_bucket()` would return next, without popping
+        them (insertion order). Empty list when the heap is exhausted."""
+        if not self._heap:
+            return []
+        first_min = self._heap[0][0]
+        return [ev for m, _, ev in sorted(e for e in self._heap if e[0] == first_min)]
 
     def peek_time(self) -> int | None:
         return self._heap[0][0] if self._heap else None

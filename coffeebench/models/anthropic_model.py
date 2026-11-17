@@ -28,7 +28,7 @@ class AnthropicModel:
         self.model = model
         self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"), timeout=300.0)
         # max_tokens reserves room for the visible output.
-        self.max_tokens = 4096
+        self.max_tokens = 32768  # reasoning tokens count against this cap
         self.temperature = 0.0
         # Temperature is always left at the provider default (never sent) — on
         # Opus 4.7+ it is rejected outright. Thinking is opt-in via `effort`

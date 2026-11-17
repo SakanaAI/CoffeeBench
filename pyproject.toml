@@ -1,7 +1,7 @@
 [project]
 name = "coffeebench"
-version = "0.1.0"
-description = "CoffeeBench"
+version = "2.0.0"
+description = "CoffeeBench: benchmarking long-horizon LLM agents in a multi-agent coffee economy"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

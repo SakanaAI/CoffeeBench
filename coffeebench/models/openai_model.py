@@ -29,9 +29,12 @@ class OpenAIModel:
         # OpenAI reasoning models can't be fully disabled, so `off` maps to the
         # "minimal" floor. None (direct construction only) → send nothing.
         self._skip_temperature = True
-        self._skip_reasoning = effort is None
+        # effort=None (`:default`) still sends `reasoning` but without an
+        # `effort` key, so the API default effort applies while the reasoning
+        # summary stays visible in the trajectory.
+        self._skip_reasoning = False
         self.reasoning_effort = "minimal" if effort == "off" else effort
-        self.max_tokens = 4096
+        self.max_tokens = 32768  # reasoning tokens count against this cap
         self.temperature = 0.0
         self.pricing = {
             "gpt-5.5": {"input": 5.00, "cached_input": 0.50, "output": 30.00},
@@ -133,10 +136,9 @@ class OpenAIModel:
             # for `response.thinking` to be non-empty. Without it the
             # reasoning is hidden inside the model and we'd have to
             # fall back to text content for the agent's `thought`.
-            kwargs["reasoning"] = {
-                "effort": self.reasoning_effort,
-                "summary": "auto",
-            }
+            kwargs["reasoning"] = {"summary": "auto"}
+            if self.reasoning_effort is not None:
+                kwargs["reasoning"]["effort"] = self.reasoning_effort
         oa_tools = self._tools_to_openai(tools)
         if oa_tools:
             kwargs["tools"] = oa_tools

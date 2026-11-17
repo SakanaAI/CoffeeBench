@@ -4,7 +4,7 @@ import asyncio
 import inspect
 from datetime import datetime
 
-from coffeebench.models import Model, get_model
+from coffeebench.models import Model, get_model, is_scripted
 from coffeebench.models.types import ModelResponse, ToolCall, ToolSpec
 
 
@@ -74,9 +74,10 @@ class Agent:
         `model.system_prompt`; OpenAI carries it as a `developer`
         message and OpenRouter as a `system` message."""
         m = self.model.model
-        if m in ("passive", "heuristic_roaster"):
-            # Scripted-policy models never read the system prompt; skip routing.
-            pass
+        if is_scripted(m):
+            # Scripted policies get the rules prompt out-of-band (v2 parses the
+            # public festival windows / prices from it; the others ignore it).
+            self.model.system_prompt = self.system_prompt
         elif m.startswith("claude-"):
             self.model.system_prompt = self.system_prompt
         elif m.startswith("gpt-"):

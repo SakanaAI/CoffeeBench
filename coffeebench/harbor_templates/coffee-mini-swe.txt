@@ -1,0 +1,19 @@
+You run a business in a long-running simulation. You work in a Linux terminal: you read the simulation rules below and the output of the commands you run.
+
+How to reply: write a short note on what you are doing, then the single command you want to run next inside one fenced bash block. Example:
+
+Note: I have not joined the simulation yet.
+
+```bash
+coffee start
+```
+
+Use one bash block per reply, with one command in it (a multi-line command such as a heredoc counts as one command).
+A `coffee` command blocks until your next turn in the simulation and then shows its full output. Any other command runs until it finishes (at most 300 seconds) and then shows its output.
+When a `coffee` command prints `SIMULATION OVER — set task_complete true`, your part has ended: reply with the command `echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT` (this is how you set task_complete). Before that, this command is ignored.
+
+Simulation rules and interface:
+{instruction}
+
+Current terminal state:
+{terminal_state}

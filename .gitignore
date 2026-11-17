@@ -214,3 +214,41 @@ trajectories_old/
 
 # Claude Code local config (per-machine state, not project)
 .claude/
+
+# local run artefacts
+run_logs/
+experiments/pilot/
+
+# Harbor adapter (generated datasets, job outputs)
+harbor_adapter/datasets/
+harbor_adapter/jobs/
+
+# synced Harbor run data (scripts/sync_hb_results.sh); top-level reports/tables are tracked
+results/hb_seed*/*/
+results/hb_f1/*/
+results/hb_k1/*/
+results/hb_k1_ctrl_p6/
+results/hb_k2/
+results/hb_k3/
+results/hb_k5/
+results/hb_f3/
+results/hb_r1/
+results/hb_r2/
+results/hb_v21a/
+results/hb_k6/
+results/hb_p6all/
+results/hb_v21b/
+results/hb_v21c/
+results/hb_v21d/
+results/hb_v21h/
+results/hb_ms2/
+results/hb_v21j/
+results/hb_v21k/
+results/hb_v21l/
+results/hb_mf1/
+results/hb_mf2/
+results/hb_mf_traj/
+results/mf_shell_llm_cache.jsonl
+results/hb_mf3/
+results/mf_llm_monitor.jsonl
+paper/arxiv_v2.zip
