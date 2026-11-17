@@ -1,7 +1,7 @@
 """CoffeeBench config → Harbor dataset (one task per agent id).
 
     unset VIRTUAL_ENV; uv run python harbor_adapter/generate_tasks.py \
-        --config experiments/camera_ready/cr_sonnetbg_roaster_opus47.toml [--network none|relay|bridge]
+        --config experiments/hb_roaster_d30_persona_none_E_llmrival_v21.toml [--network none|relay|bridge]
 
 Output: harbor_adapter/datasets/<config name>[_d<days>][_<network>]/<agent_id>/
     instruction.md          rules prompt (coffeebench.rules_prompt) + CLI guide + tool list

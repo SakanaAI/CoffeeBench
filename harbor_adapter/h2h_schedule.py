@@ -2,7 +2,7 @@
 
     uv run python harbor_adapter/h2h_schedule.py                       # pilot: 7 models, k=4, seed 0
     uv run python harbor_adapter/h2h_schedule.py --round-robin --reps 2 --mirror Sonnet55,Qwen38F
-    uv run python harbor_adapter/h2h_schedule.py --configs experiments/camera_ready_hb/hb_roaster_d30.toml,...
+    uv run python harbor_adapter/h2h_schedule.py --configs experiments/hb_roaster_d30.toml,...
 
 Pairings (unordered): `--k K` (default 4) = a K-regular circulant graph on a
 seeded random permutation of the models (every model plays exactly K distinct
@@ -31,8 +31,8 @@ FOCAL_COST = {"Fable5": 30.0, "MuseW": 25.0, "Sonnet55": 12.0, "Muse13": 10.0,
 BG_COST = {"Sonnet55": 8.0}  # 4 background seats per 30-day run
 # 90-day runs ≈ 3× the 30-day cost (focal and background; the H2H bg is Sonnet55, not the slower Qwen roster).
 HORIZON_MULT = {30: 1.0, 90: 3.0}
-DEFAULT_CONFIG = {30: "experiments/camera_ready_hb/hb_roaster_d30.toml",   # pilot
-                  90: "experiments/camera_ready_hb/hb_roaster.toml"}       # paper runs (festival days 40-53)
+DEFAULT_CONFIG = {30: "experiments/hb_roaster_d30.toml",   # pilot
+                  90: "experiments/hb_roaster.toml"}       # paper runs (festival days 40-53)
 # 12 h jobs for both horizons: a 90-day run continues across jobs via the
 # walltime stop + exact resume + self-requeue (as the seed-0 90-day matrix did).
 # --walltime-h N > 12 passes -l walltime and CB_WALLTIME_SEC (kept on requeue).

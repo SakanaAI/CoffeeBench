@@ -49,7 +49,7 @@ from statistics import mean
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-CFG_DIR = ROOT / "experiments" / "camera_ready_hb"
+CFG_DIR = ROOT / "experiments"
 FOCALS = ("passive", "heuristic_roaster", "heuristic_roaster_v2")
 
 
@@ -279,7 +279,7 @@ def test_persona(tmp: Path) -> bool:
 def test_harbor(_tmp: Path) -> bool:
     """Checks the three scripted Harbor runs (all $0, local Docker):
         HARBOR_CMD=... SCRIPTED_MECH=1 uv run python harbor_adapter/launch_sim.py \
-            --config experiments/camera_ready_hb/hb_roaster_d30_rule_E.toml --seed 0 --scripted \
+            --config experiments/hb_roaster_d30_rule_E.toml --seed 0 --scripted \
             --bg Rule|Persona:Sonnet55 --max-days 8 --network relay
         (+ hb_roaster_d30_persona_E.toml --bg Persona:Sonnet55: rule roaster_B, persona rest)."""
     res = []

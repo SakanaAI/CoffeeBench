@@ -29,7 +29,7 @@ def main() -> None:
     ap.add_argument("--no-baselines", action="store_true")
     args = ap.parse_args()
     for role in args.roles.split(","):
-        cfg = f"experiments/camera_ready_hb/hb_{role}.toml"
+        cfg = f"experiments/hb_{role}.toml"
         for roster in args.rosters.split(","):
             for seed in args.seeds.split(","):
                 base = f"--config {cfg} --seed {seed} --bg {roster}"

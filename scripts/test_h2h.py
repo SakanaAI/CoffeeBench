@@ -15,7 +15,7 @@ ratings     h2h_ratings on synthetic runs (written in the launcher's on-disk lay
             overall tables and figures; weekly time profile (diagnostic only).
 harbor      checks the local scripted run (Docker, $0):
               HARBOR_CMD=/private/tmp/hbvenv/bin/harbor SCRIPTED_DIE_AGENT=roaster_B SCRIPTED_DIE_STEP=6 \\
-              uv run python harbor_adapter/launch_sim.py --config experiments/camera_ready_hb/hb_roaster_d30.toml \\
+              uv run python harbor_adapter/launch_sim.py --config experiments/hb_roaster_d30.toml \\
                 --seed 0 --scripted --focal2 scripted --bg Sonnet55 --max-days 3 --network relay
             → three Harbor jobs (focal: roaster_A, focal2: roaster_B, bg: 4 seats), output under
             H2H_none/scripted_vs_scripted, h2h.json seats, crash restart after roaster_B's trial died,
@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "harbor_adapter"))
 sys.path.insert(0, str(ROOT / "scripts"))
-CFG = ROOT / "experiments" / "camera_ready_hb"
+CFG = ROOT / "experiments"
 
 
 def ok(cond: bool, msg: str) -> bool:
@@ -128,7 +128,7 @@ def test_schedule(_tmp: Path) -> bool:
                   f"--reps 2 --mirror: {n_sims} sims in {len(q)} jobs; 30- and 90-day costs printed"))
     out90 = subprocess.run([sys.executable, str(ROOT / "harbor_adapter" / "h2h_schedule.py"), "--days", "90"],
                            capture_output=True, text=True, check=True).stdout
-    res.append(ok("CB_CONFIG=experiments/camera_ready_hb/hb_roaster.toml," in out90 and "walltime" not in out90.split("# Cost")[0].split("qsub lines")[1],
+    res.append(ok("CB_CONFIG=experiments/hb_roaster.toml," in out90 and "walltime" not in out90.split("# Cost")[0].split("qsub lines")[1],
                   "--days 90: hb_roaster.toml, default 12 h jobs (requeue)"))
     out48 = subprocess.run([sys.executable, str(ROOT / "harbor_adapter" / "h2h_schedule.py"), "--days", "90",
                             "--walltime-h", "48"], capture_output=True, text=True, check=True).stdout

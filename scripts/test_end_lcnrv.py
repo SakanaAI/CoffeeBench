@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from test_rule_market import build_env, ok, run_sim  # noqa: E402
 
-BASE = ROOT / "experiments" / "camera_ready_hb" / "hb_roaster_d30_rule_E.toml"
+BASE = ROOT / "experiments" / "hb_roaster_d30_rule_E.toml"
 
 
 def with_lcnrv(tmp: Path, enabled: bool, days: int = 3) -> Path:

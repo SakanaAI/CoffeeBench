@@ -1,0 +1,46 @@
+[experiment]
+name = "hb_roaster_d30"
+description = "Head-to-head (Arena) 30-day roaster market: two evaluated models in the two roaster seats (roaster_A = X, roaster_B = Y), the other four seats (farmers, retailers) a fixed plain LLM background (no persona). Harbor: launch_sim.py --config this --focal X --focal2 Y --bg Sonnet55. Score = NI(X) - NI(Y); every pairing runs in both seat orders (harbor_adapter/h2h_schedule.py, scripts/h2h_ratings.py). Same economy and festival as hb_roaster_d30_rule (base), no E mechanics."
+
+[run]
+seeds = [0, 1, 2]
+max_days = 30
+# roaster_A = launch_sim --focal (X), roaster_B = --focal2 (Y; --opponent-seat).
+main_agent = "roaster_A"
+# Symmetric early stop: the run ends (after that day's EOD) when EITHER
+# evaluated roaster goes bankrupt, so the stop rule does not depend on which
+# seat a model sits in (a seat swap would otherwise change the horizon).
+early_stop_agents = ["roaster_A", "roaster_B"]
+
+# In-process defaults (python -m coffeebench.main --config ...): rule bots in
+# every seat. Harbor H2H runs make both roasters remote (focal / focal2 jobs)
+# and the four other seats the LLM background job (--bg <model>).
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "heuristic_roaster_v2"
+roaster_B = "heuristic_roaster_v2"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"
+
+[economy]
+# = the default INITIAL_CASH, stated explicitly (every agent starts with it).
+initial_cash = 7000
+
+# No [kpi] overrides: both roasters get the default net-income framing, so the
+# rules prompts of roaster_A and roaster_B differ only in the seat identity
+# (checked by scripts/test_h2h.py).
+
+[mechanics]
+# As hb_roaster_d30_rule (base): advisories may be announced (none is issued),
+# no shocks, no E1-E4.
+announce_advisories = true
+
+# D3 festival inside the 30-day window (as the base config): days 15-21, x3;
+# dates public, multiplier not.
+[[mechanics.festivals]]
+name = "spring_break"
+start = 15
+end = 21
+multiplier = 3.0

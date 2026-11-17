@@ -1,9 +1,9 @@
 """$0 Harbor test of exact resume (CoffeeTerminus + scripted fake LLM, docker).
 
     unset VIRTUAL_ENV; HARBOR_CMD=/private/tmp/hbvenv/bin/harbor \
-        uv run python harbor_adapter/smoke_resume_exact.py [--config experiments/camera_ready_hb/hb_roaster.toml]
+        uv run python harbor_adapter/smoke_resume_exact.py [--config experiments/hb_roaster.toml]
     # head-to-head (three Harbor jobs: focal roaster_A, focal2 roaster_B, bg):
-    ... smoke_resume_exact.py --h2h --config experiments/camera_ready_hb/hb_roaster_d30.toml
+    ... smoke_resume_exact.py --h2h --config experiments/hb_roaster_d30.toml
 
 Three 4-day scripted runs (all 6 agents = ScriptedCoffeeTerminus; `--network relay`
 by default = no-network containers on Docker Desktop, `none` on Linux):
@@ -137,7 +137,7 @@ def crash_watch(run_dir: Path, stop: threading.Event, info: dict) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="experiments/camera_ready_hb/hb_roaster.toml")
+    ap.add_argument("--config", default="experiments/hb_roaster.toml")
     ap.add_argument("--only", default="A,B,C")
     ap.add_argument("--reuse-a", default=None, help="Jobs dir of an earlier run A (skip A).")
     ap.add_argument("--reuse-b", default=None, help="Jobs dir of an earlier run B (skip launching B; "

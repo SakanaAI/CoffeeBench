@@ -28,7 +28,7 @@ from test_rule_market import build_env, ok  # noqa: E402
 
 from coffeebench.typings import Invoice  # noqa: E402
 
-BASE = ROOT / "experiments" / "camera_ready_hb" / "hb_roaster_d30_rule_E.toml"
+BASE = ROOT / "experiments" / "hb_roaster_d30_rule_E.toml"
 
 
 def cfg(tmp: Path, extra: str = "") -> Path:

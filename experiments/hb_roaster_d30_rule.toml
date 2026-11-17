@@ -1,0 +1,44 @@
+[experiment]
+name = "hb_roaster_d30_rule"
+description = "30-day roaster_A focal against the fixed rule-based background market (farmers = heuristic_farmer, roaster_B = heuristic_roaster_v2, retailers = heuristic_retailer). Harbor: launch_sim.py --bg Rule --focal <model>. Base variant (no shocks; festival inside the window)."
+
+[run]
+seeds = [0, 1, 2]
+max_days = 30
+main_agent = "roaster_A"
+
+# In-process defaults (python -m coffeebench.main --config ...): the rule
+# background + the strong rule-based roaster as focal. Harbor runs override
+# roaster_A (remote focal) and use the same rule background (--bg Rule).
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "heuristic_roaster_v2"
+roaster_B = "heuristic_roaster_v2"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"
+
+# Economy: defaults (INITIAL_CASH $7,000 per agent; caps farmer/roaster 120 kg,
+# retailer 80 kg). For 30 days the fixed opex is $750 / $900 / $1,500
+# (farmer / roaster / retailer), i.e. 11-21% of the starting cash: cash still
+# binds for a roaster that over-buys (50 kg green/day of specialty ≈ $700/day
+# + $250 labor) but an idle agent survives, so NI rather than survival is
+# what separates policies. The caps (≈ 2.4 days of roast input; ≈ 2-3 days of
+# retail sales) are horizon-independent and keep stock rotation binding.
+
+[mechanics]
+# Same prompt as the _D variant: both state that weather advisories may be
+# issued (none is issued here), so base vs D differ only in the mechanics.
+announce_advisories = true
+
+# D3 festival, moved inside the 30-day window with the same relative structure
+# as the 90-day run (spring_break days 40-53 ×3 = starts at ~45% of the run,
+# lasts ~15%): days 15-21 (7 days, starts at 50%, 8 post-festival days for
+# the overstock to unwind). Dates are public (rules prompt); the multiplier is
+# not.
+[[mechanics.festivals]]
+name = "spring_break"
+start = 15
+end = 21
+multiplier = 3.0

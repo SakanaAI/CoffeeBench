@@ -1,0 +1,8 @@
+[experiment]
+name = "hb_roaster"
+description = "Camera-ready (Harbor harness). Focal = roaster_A. Focal model and background roster (Haiku55 | Qwen38F) are chosen at launch: harbor_adapter/launch_sim.py --focal <model> --bg <roster>; baselines keep roaster_A --local."
+
+[run]
+seeds = [0, 1, 2]
+max_days = 90
+main_agent = "roaster_A"
