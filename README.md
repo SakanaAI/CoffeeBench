@@ -65,6 +65,8 @@ cp .env.example .env                                     # OPENROUTER_API_KEY=..
 ```
 
 Docker (or rootless podman on a cluster) is needed for Harbor runs. Rule-based runs need neither Harbor nor Docker.
+The launcher calls the `harbor` CLI on your PATH; if that is another version, point `HARBOR_CMD` at the pinned one
+(e.g. `HARBOR_CMD=~/.local/share/uv/tools/harbor/bin/harbor`). Harbor 0.1.x does not work.
 
 ## Run
 
