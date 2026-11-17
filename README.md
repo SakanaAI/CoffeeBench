@@ -62,6 +62,7 @@ results, prompts and the agent trajectories are in the paper and on the trajecto
 uv sync                                                  # environment, server, CLI, analysis scripts (Python ≥ 3.12)
 uv tool install harbor==0.24.0 --with litellm==1.104.0   # harness, host side (pins: harbor_adapter/requirements-harness.txt)
 cp .env.example .env                                     # OPENROUTER_API_KEY=...
+set -a; . ./.env; set +a                                 # the launcher passes the key from the environment to Harbor
 ```
 
 Docker (or rootless podman on a cluster) is needed for Harbor runs. Rule-based runs need neither Harbor nor Docker.
