@@ -61,6 +61,12 @@ changed, so **v1 and v2 results are not comparable**. v1 remains available as th
 - `harbor_adapter/cluster/`: PBS job script and rootless-podman setup for cluster runs.
 - `CHANGELOG.md`, `CITATION.cff`.
 
+### Known issues
+
+- Claude Sonnet 5.5 at `--effort max` via OpenRouter has returned `content_filter` / refusal responses to the agent
+  prompt since mid-November 2026 (see README, "Known issues"); the paper's runs predate this. Use `--effort default`
+  for Sonnet 5.5 until the provider behaviour changes back.
+
 ### Trajectory site
 
 - The trajectory site is being rebuilt for v2 (agent terminals, inter-firm messages, KPI-pressure cases); the released
