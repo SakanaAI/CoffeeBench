@@ -172,11 +172,13 @@ PYTHONPATH=. ~/.cache/cb_hbvenv/bin/python scripts/test_empty_llm_response.py
 ## Citation
 
 ```bibtex
-@inproceedings{sugiura2026coffeebench,
-  title     = {CoffeeBench: Benchmarking Long-Horizon LLM Agents in Heterogeneous Multi-Agent Economies},
-  author    = {Issa Sugiura and Daichi Hattori and Kazuo Araragi and Keita Ogawa and Shota Onose and Taro Makino and Teppei Usuki and Takashi Ishida},
-  booktitle = {Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track},
-  year      = {2026},
-  url       = {https://arxiv.org/abs/2606.16613}
+@inproceedings{
+sugiura2026coffeebench,
+title={CoffeeBench: Benchmarking Long-Horizon {LLM} Agents in Heterogeneous Multi-Agent Economies},
+author={Issa Sugiura and Daichi Hattori and Kazuo Araragi and Keita Ogawa and Shota Onose and Taro Makino and Teppei Usuki and Takashi Ishida},
+booktitle={The Fortieth Annual Conference on Neural Information Processing Systems Evaluations and Datasets Track},
+year={2026},
+url={https://openreview.net/forum?id=yTlqnsbF9X}
+}
 }
 ```
