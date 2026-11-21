@@ -1,9 +1,9 @@
 <div align="center">
 <h1>CoffeeBench: Benchmarking Long-Horizon LLM Agents in Heterogeneous Multi-Agent Economies</h1>
 
-<a href="https://arxiv.org/abs/2606.16613">📄 Paper (NeurIPS 2026, Datasets & Benchmarks)</a> &nbsp;|&nbsp;
+<a href="https://arxiv.org/abs/2606.16613">📄 Paper</a> &nbsp;|&nbsp;
 <a href="https://pub.sakana.ai/coffeebench/index.html">📝 Blog</a> &nbsp;|&nbsp;
-<a href="https://pub.sakana.ai/coffeebench/trajectories/">🔍 Leaderboard &amp; trajectories</a> &nbsp;|&nbsp;
+<a href="https://pub.sakana.ai/coffeebench/trajectories/">🔍 Trajectory site</a> &nbsp;|&nbsp;
 <a href="https://huggingface.co/datasets/SakanaAI/coffeebench-trajectories">🤗 Dataset</a>
 
 <br/><br/>
