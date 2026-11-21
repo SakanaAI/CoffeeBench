@@ -42,6 +42,8 @@ results, prompts and the agent trajectories are in the paper and on the trajecto
 
 ## How it works
 
+<div align="center"><img src="./assets/harness.png" width="86%"/></div>
+
 - **Environment** (`coffeebench/`): marketplace with listings, offers, messages and trade credit; lot-based perishable
   inventory with FIFO costing; consumer demand with weekday, trend, weather and festival effects; an announced supply
   shock; a capacity upgrade; accrual accounting with a period-end revaluation and credit-loss allowance; bankruptcy.
