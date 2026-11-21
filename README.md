@@ -3,10 +3,11 @@
 
 <a href="https://arxiv.org/abs/2606.16613">📄 Paper (NeurIPS 2026, Datasets & Benchmarks)</a> &nbsp;|&nbsp;
 <a href="https://pub.sakana.ai/coffeebench/index.html">📝 Blog</a> &nbsp;|&nbsp;
-<a href="https://pub.sakana.ai/coffeebench/trajectories.html">🔍 Trajectories</a>
+<a href="https://pub.sakana.ai/coffeebench/trajectories/">🔍 Leaderboard &amp; trajectories</a> &nbsp;|&nbsp;
+<a href="https://huggingface.co/datasets/SakanaAI/coffeebench-trajectories">🤗 Dataset</a>
 
 <br/><br/>
-<img src="./assets/overview.png" width="92%"/>
+<img src="./assets/replay.gif" width="92%"/>
 </div>
 
 CoffeeBench is a simulated coffee supply chain run by six autonomous LLM agents: two farmers, two roasters and two
