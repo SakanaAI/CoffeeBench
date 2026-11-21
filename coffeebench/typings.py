@@ -52,6 +52,43 @@ class Item:
     # producer's inventory. Cash is debited at call time (commitment); the
     # asset materializes after `production_lag_days`. 0 = same-day.
     production_lag_days: int = 0
+    # Shelf life in days. Every unit of this item belongs to a `Lot`
+    # whose `expiry_day = produced_day + shelf_life_days`; lots are
+    # written off in full at the EOD of their expiry day. None = never
+    # expires.
+    shelf_life_days: int | None = None
+
+
+@dataclass
+class Lot:
+    """A homogeneous batch of one tangible item held by one agent.
+
+    Inventory is lot-based: every unit belongs to exactly one lot.
+    Consumption (B2B shipments, roasting input, consumer sales, returns)
+    is FIFO by expiry (earliest `expiry_day` first) and is costed at each
+    consumed lot's own `unit_cost` (FIFO costing; no weighted average).
+    A lot stays sellable through the END of `expiry_day`; at that day's
+    EOD it is written off in full as `spoilage_expense`.
+
+    `produced_day` / `expiry_day` travel with the goods: a delivered deal
+    transfers the shipped lot pieces to the buyer with their original
+    dates (the buyer's `unit_cost` = the deal's unit price), and a return
+    sends them back with their original dates. `source_deal_id` marks
+    lots received through a deal (used to return the deal's own lots
+    first).
+    """
+
+    lot_id: str
+    item_id: str
+    qty: int
+    unit_cost: float
+    produced_day: int
+    expiry_day: int | None
+    source_deal_id: str | None = None
+
+    @property
+    def value(self) -> float:
+        return self.qty * self.unit_cost
 
 
 @dataclass
@@ -61,12 +98,19 @@ class Listing:
     item_id: str
     qty: int  # units offered
     asking_price: float  # PER UNIT, in USD
-    payment_terms_days: int  # net-N from delivery
+    # Seller's REQUESTED net-N from delivery. Not binding: the deal uses
+    # the terms of the offer the seller accepts.
+    payment_terms_days: int
     # Sim-time at posting, in minutes since sim start (e.g. 44040
     # = Day 30, 14:00). Day = `posted_at // 1440`. Render in agent
     # views via `coffeebench.event_loop.format_min()`.
     posted_at: int
     status: str = "open"  # "open" | "closed" | "cancelled" | "expired"
+    # Expiry range of the seller's FIFO lots that would have covered the
+    # listed qty AT POSTING TIME ({earliest_expiry_day, latest_expiry_day,
+    # as_of_day}). A static snapshot shown to buyers — never recomputed
+    # live, and it carries no quantities / holdings / production days.
+    freshness_at_posting: dict | None = None
 
 
 @dataclass
@@ -77,10 +121,13 @@ class Offer:
     seller_id: str  # mirrored from listing for convenience
     offered_price: float  # PER UNIT
     qty: int  # ≤ listing.qty
-    payment_terms_days: int  # buyer's proposed payment terms
+    payment_terms_days: int  # buyer's proposed terms; binding if accepted
     posted_at: int  # minutes since sim start
     message: str | None = None
-    status: str = "pending"  # "pending" | "accepted" | "rejected" | "withdrawn"
+    # "pending" | "accepted" | "rejected" | "withdrawn" | "expired"
+    # (unanswered at the end of the day after posting) | "cancelled"
+    # (a party went bankrupt).
+    status: str = "pending"
 
 
 @dataclass
@@ -119,6 +166,16 @@ class Deal:
     # `Marketplace.accept_offer`, so every deal exposed to downstream
     # code has it set; the dataclass default is the pre-hook sentinel.
     _reserved_seller_cogs: float = 0.0
+    # The seller's lot pieces reserved at accept time (FIFO by expiry).
+    # `_reserved_seller_cogs` == Σ piece.qty × piece.unit_cost. On
+    # delivery they move to the buyer with their original produced /
+    # expiry days (re-costed at `unit_price`); on cancellation they go
+    # back to the seller unchanged; on loss they are written off.
+    _reserved_lots: list[Lot] = field(default_factory=list)
+    # Set when an accepted-but-undelivered deal is unwound because the
+    # buyer or seller went bankrupt (see
+    # `Environment._cancel_pending_shipments_for`). No invoice is issued.
+    cancelled_day: int | None = None
 
 
 @dataclass
@@ -141,6 +198,13 @@ class Message:
     ref_listing_id: str | None = None
     ref_offer_id: str | None = None
     ref_deal_id: str | None = None
+    # Reply threading. `reply_to_message_id` is the message this one
+    # answers (must have been visible to the sender, i.e. sent to or by
+    # them); `thread_id` is the id of the thread's root message (a
+    # message that replies to nothing roots its own thread, so
+    # thread_id == id).
+    reply_to_message_id: str | None = None
+    thread_id: str | None = None
 
 
 @dataclass
@@ -208,6 +272,9 @@ class Invoice:
     # off rather than deleting the record.
     bad_debt: bool = False
     bad_debt_date: int | None = None
+    # v2.1 `[mechanics.end_credit_loss]`: end-of-run expected-credit-loss
+    # allowance booked by the ISSUER (reduces its AR, not the payer's AP).
+    credit_loss_allowance: float = 0.0
 
     @property
     def net_outstanding(self) -> float:

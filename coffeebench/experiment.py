@@ -68,12 +68,27 @@ def _summarise_run(traj_path: Path) -> dict:
             "roast_metrics": a.get("roast_metrics"),
             "bankrupt_day": bankrupt_day.get(aid),
         }
+    # Trade-integrity flags (detection only; see coffeebench.audit_metrics).
+    cross: dict = {}
+    events_path = traj_path.parent / "run.events.jsonl"
+    if events_path.exists():
+        from coffeebench.audit_metrics import compute_audit_metrics
+
+        try:
+            am = compute_audit_metrics(events_path)
+            cross = dict(am["summary"])
+            for aid, v in am["audited_ni"].items():
+                if aid in per_agent:
+                    per_agent[aid]["audited_net_income"] = v["audited_net_income"]
+        except Exception as exc:  # noqa: BLE001
+            cross = {"error": str(exc)}
     return {
         "loaded": True,
         "max_days": data.get("max_days"),
         "final_day": data.get("final_day"),
         "per_agent": per_agent,
         "bankrupt": list(bankrupt),
+        "cross": cross,
     }
 
 
@@ -138,10 +153,9 @@ def _print_summary_table(config: RunConfig, results: dict[int, dict]) -> None:
             f"{(r['per_agent'].get(aid) or {}).get('true_net_income', '—'):>13}"
             for aid in agent_ids
         )
+        # rt = flagged round trips, st = deals above reservation price.
         c = r.get("cross") or {}
-        cross_str = (
-            f"c{c.get('circular', 0)}f{c.get('friendly', 0)}o{c.get('overdue', 0)}"
-        )
+        cross_str = f"rt{c.get('n_round_trips', '?')}st{c.get('n_stuffing', '?')}"
         bk = ",".join(r.get("bankrupt") or []) or "—"
         print(f"  {seed:>4}  {ni}  {cross_str:>14}   bk={bk}")
 

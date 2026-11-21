@@ -23,6 +23,10 @@ class RunConfig:
     # as this agent goes bankrupt — once the subject of measurement is
     # dead, continuing collects no signal. None = no early-stop.
     main_agent: str | None = None
+    # Agents whose bankruptcy ends the run early ([run] early_stop_agents).
+    # Empty = [main_agent]. Head-to-head ("Arena") configs list both evaluated
+    # seats so the stop rule is symmetric under a seat swap.
+    early_stop_agents: list[str] = field(default_factory=list)
     # agent_id -> model_id
     models: dict[str, str] = field(default_factory=dict)
     # env-constant overrides (only keys that are set will override defaults).
@@ -33,6 +37,12 @@ class RunConfig:
     # Truth-ledger leaderboard score is unaffected by this — it tells
     # the agent what to optimise for, not what is reported.
     kpi: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Raw `[mechanics]` table (optional Option-D mechanics + per-run festival
+    # schedule; see coffeebench.mechanics). Empty = all off (default).
+    mechanics: dict[str, Any] = field(default_factory=dict)
+    # Raw `[background]` table (Harbor launcher only), e.g. rule_seats =
+    # ["roaster_B"]: seats kept rule-based under `--bg Persona:<model>`.
+    background: dict[str, Any] = field(default_factory=dict)
     # path the config was loaded from (for snapshot copying)
     source_path: str | None = None
 
@@ -64,6 +74,12 @@ class RunConfig:
             else:
                 print(f"[config] WARN: ignoring kpi[{aid}] (must be str or table)")
 
+        mechanics = dict(data.get("mechanics") or {})
+        if mechanics:
+            from coffeebench import mechanics as mech_mod
+
+            mech_mod.parse(mechanics)  # validate early (raises on bad keys)
+
         name = exp.get("name") or path.stem
         main_agent_raw = run.get("main_agent")
         return cls(
@@ -75,7 +91,10 @@ class RunConfig:
             models=models,
             economy=economy,
             kpi=kpi,
+            mechanics=mechanics,
+            background=dict(data.get("background") or {}),
             main_agent=str(main_agent_raw) if main_agent_raw else None,
+            early_stop_agents=[str(a) for a in (run.get("early_stop_agents") or [])],
             source_path=str(path),
         )
 
@@ -87,7 +106,12 @@ class RunConfig:
 
         Recognised keys (case-sensitive in the TOML):
           - demand_base, demand_hi, demand_sigma
-          - inventory_spoilage_per_day
+          - shelf_life_green_days    -> SHELF_LIFE_DAYS for both green items
+          - shelf_life_roasted_days  -> SHELF_LIFE_DAYS for both roasted items
+          - shelf_life_days          -> table {item_id = days} (per item)
+          - inventory_spoilage_per_day: REMOVED (uniform daily decay was
+            replaced by lot expiry); accepted for backward compat but
+            ignored with a warning.
           - late_fee_per_day
           - opex                     -> sets ALL roles' DAILY_OPEX_BY_ROLE values
           - farmer_delivery_extra_days
@@ -99,6 +123,7 @@ class RunConfig:
           - roast_daily_cap_green_kg
           - delivery_delay_prob, delivery_loss_prob
           - p_res (sets coffee items' retail_reservation_price — applied at item-build time)
+          - initial_cash (every agent's starting cash; default main.INITIAL_CASH)
         """
         if not self.economy:
             return
@@ -108,7 +133,6 @@ class RunConfig:
             "demand_base": ("DEMAND_BASE", float),
             "demand_hi": ("DEMAND_HI", float),
             "demand_sigma": ("DEMAND_SIGMA", float),
-            "inventory_spoilage_per_day": ("INVENTORY_SPOILAGE_PER_DAY", float),
             "late_fee_per_day": ("LATE_FEE_PER_DAY", float),
             "farmer_delivery_extra_days": ("FARMER_DELIVERY_EXTRA_DAYS", int),
             "return_window_days": ("RETURN_WINDOW_DAYS", int),
@@ -123,6 +147,26 @@ class RunConfig:
             "roast_lag_days": ("lag_days", int),
         }
         for key, value in self.economy.items():
+            if key == "inventory_spoilage_per_day":
+                print(
+                    "[config] WARN: economy.inventory_spoilage_per_day is no "
+                    "longer used (spoilage is lot expiry; see shelf_life_*_days) "
+                    "— ignored"
+                )
+                continue
+            if key in ("shelf_life_green_days", "shelf_life_roasted_days"):
+                prefix = "green_" if key == "shelf_life_green_days" else "roasted_"
+                for item_id in env_mod.SHELF_LIFE_DAYS:
+                    if item_id.startswith(prefix):
+                        env_mod.SHELF_LIFE_DAYS[item_id] = int(value)
+                continue
+            if key == "shelf_life_days":
+                if not isinstance(value, dict):
+                    print("[config] WARN: shelf_life_days must be a table (ignored)")
+                    continue
+                for item_id, days in value.items():
+                    env_mod.SHELF_LIFE_DAYS[str(item_id)] = int(days)
+                continue
             if key == "opex":
                 # Flat opex across all roles.
                 for r in env_mod.DAILY_OPEX_BY_ROLE:
@@ -133,9 +177,9 @@ class RunConfig:
                 env_mod.ROAST_RECIPES["green_coffee_kg"][field] = caster(value)
                 continue
             if key not in mapping:
-                # `p_res` is handled by main._seed_world which reads
-                # `economy.p_res` separately; other unknowns are warnings.
-                if key != "p_res":
+                # `p_res` / `initial_cash` are handled by main._seed_world
+                # (read from `economy` directly); other unknowns are warnings.
+                if key not in ("p_res", "initial_cash"):
                     print(f"[config] WARN: unknown economy key '{key}' (ignored)")
                 continue
             attr, caster = mapping[key]

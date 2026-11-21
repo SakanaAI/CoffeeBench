@@ -1,0 +1,49 @@
+[experiment]
+name = "hb_roaster_d30_rule_D"
+description = "30-day roaster_A focal against the rule-based background market, skill-sensitive variant: announced supply shock (weather advisory 3 days ahead) + a stronger festival (×4). Harbor: launch_sim.py --bg Rule --focal <model>."
+
+[run]
+seeds = [0, 1, 2]
+max_days = 30
+main_agent = "roaster_A"
+
+[models]
+default = "passive"
+farmer_A = "heuristic_farmer"
+farmer_B = "heuristic_farmer"
+roaster_A = "heuristic_roaster_v2"
+roaster_B = "heuristic_roaster_v2"
+retailer_A = "heuristic_retailer"
+retailer_B = "heuristic_retailer"
+
+# Economy as in hb_roaster_d30_rule.toml (defaults).
+
+[mechanics]
+announce_advisories = true
+
+# D3: same public dates as the base config, larger (undisclosed) multiplier:
+# ×4 makes stocking ahead of the festival (green bought before day 15, roasted
+# stock built in the ramp, inventory cap 120 kg) the dominant lever.
+[[mechanics.festivals]]
+name = "spring_break"
+start = 15
+end = 21
+multiplier = 4.0
+
+# D2: announced weather supply shock. Start day drawn per seed in days 8-12
+# (own seeded stream; identical for every focal model at a given seed), 5 days
+# long, so it always falls in the run-up to / start of the festival: farmers'
+# daily production cap ×0.4 (30 → 12 kg commodity, 10 → 4 kg specialty) and
+# unit production cost ×1.5 ($2 → $3, $10 → $15). Public advisory in every
+# agent's morning observation from 3 days before the first shock day, so a
+# good roaster can stock green (shelf life 60 days) before supply tightens.
+# D1 (unannounced random demand shift) is deliberately NOT used: it would add
+# luck rather than measure skill.
+[mechanics.supply_shock]
+enabled = true
+window = [8, 12]
+days = 5
+capacity_factor = 0.4
+cost_factor = 1.5
+advisory_days = 3
+items = ["green_coffee_kg", "green_specialty_kg"]

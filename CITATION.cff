@@ -1,0 +1,46 @@
+cff-version: 1.2.0
+message: "If you use CoffeeBench, please cite the paper."
+title: "CoffeeBench: Benchmarking Long-Horizon LLM Agents in Heterogeneous Multi-Agent Economies"
+version: 2.0.0
+date-released: 2026-11-17
+url: "https://github.com/SakanaAI/CoffeeBench"
+authors:
+  - family-names: Sugiura
+    given-names: Issa
+  - family-names: Hattori
+    given-names: Daichi
+  - family-names: Araragi
+    given-names: Kazuo
+  - family-names: Ogawa
+    given-names: Keita
+  - family-names: Onose
+    given-names: Shota
+  - family-names: Makino
+    given-names: Taro
+  - family-names: Usuki
+    given-names: Teppei
+  - family-names: Ishida
+    given-names: Takashi
+preferred-citation:
+  type: conference-paper
+  title: "CoffeeBench: Benchmarking Long-Horizon LLM Agents in Heterogeneous Multi-Agent Economies"
+  authors:
+    - family-names: Sugiura
+      given-names: Issa
+    - family-names: Hattori
+      given-names: Daichi
+    - family-names: Araragi
+      given-names: Kazuo
+    - family-names: Ogawa
+      given-names: Keita
+    - family-names: Onose
+      given-names: Shota
+    - family-names: Makino
+      given-names: Taro
+    - family-names: Usuki
+      given-names: Teppei
+    - family-names: Ishida
+      given-names: Takashi
+  collection-title: "Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track"
+  year: 2026
+  url: "https://arxiv.org/abs/2606.16613"

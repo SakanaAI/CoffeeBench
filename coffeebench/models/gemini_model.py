@@ -54,7 +54,7 @@ class GeminiModel:
             api_key=os.getenv("GEMINI_API_KEY"),
             http_options=genai_types.HttpOptions(timeout=300_000),  # ms
         )
-        self.max_tokens = 4096
+        self.max_tokens = 32768  # reasoning tokens count against this cap
         self.temperature = 0.0
         # Temperature is always left at the provider default (never sent).
         # `effort` (the `gemini-3.1-pro-preview:high` model-string suffix) maps
@@ -225,6 +225,12 @@ class GeminiModel:
             cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(
                 include_thoughts=self._include_thoughts,
                 thinking_level=self.thinking_level,
+            )
+        else:
+            # `:default` — leave thinking_level at the API default (high) but
+            # surface thought summaries for the trajectory.
+            cfg_kwargs["thinking_config"] = genai_types.ThinkingConfig(
+                include_thoughts=True
             )
         if self.system_prompt:
             cfg_kwargs["system_instruction"] = self.system_prompt

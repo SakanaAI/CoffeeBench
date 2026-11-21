@@ -59,7 +59,7 @@ class OpenRouterModel:
             base_url="https://openrouter.ai/api/v1",
             timeout=300.0,
         )
-        self.max_tokens = 4096
+        self.max_tokens = 32768  # reasoning tokens count against this cap
         self.temperature = 0.0
         # Temperature is always left at the provider default (never sent).
         # `effort` (the `z-ai/glm-5.2:high` model-string suffix) is forwarded as
@@ -146,6 +146,12 @@ class OpenRouterModel:
                         }
                         for tc in tool_calls
                     ]
+                # Replay the model's reasoning blocks on later turns (OpenRouter
+                # recommends this for tool-calling continuity when reasoning is
+                # on; Kimi K2.6 rejects assistant turns missing it).
+                raw = m.get("_raw") or {}
+                if isinstance(raw, dict) and raw.get("reasoning_details"):
+                    msg["reasoning_details"] = raw["reasoning_details"]
                 out.append(msg)
                 continue
             out.append({"role": role, "content": m.get("content", "")})
@@ -235,13 +241,21 @@ class OpenRouterModel:
                 args = {}
             tool_calls.append(ToolCall(id=tc.id, name=tc.function.name, input=args))
 
+        # Reasoning text / structured blocks come back as OpenRouter extension
+        # fields (absent when reasoning is disabled).
+        extra = getattr(msg, "model_extra", None) or {}
+        reasoning_text = getattr(msg, "reasoning", None) or extra.get("reasoning") or ""
+        reasoning_details = (
+            getattr(msg, "reasoning_details", None) or extra.get("reasoning_details")
+        )
+
         return ModelResponse(
             content=content_text,
-            thinking="",
+            thinking=reasoning_text,
             tool_calls=tool_calls,
             stop_reason=getattr(choice, "finish_reason", "") or "",
             cost=cost,
-            raw=None,
+            raw={"reasoning_details": reasoning_details} if reasoning_details else None,
         )
 
     def get_usage_stats(self) -> dict:

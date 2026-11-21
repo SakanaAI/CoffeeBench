@@ -1,0 +1,6 @@
+# Pinned harness (host side: `uv tool install harbor==0.24.0 --with litellm==1.104.0`).
+# litellm 1.107.0 (PyPI, 2026-10-21) was a credential-stealing release
+# (https://www.wiz.io/blog/litellm-compromised-steals-credentials); cluster/pbs_job.sh
+# refuses to start unless the installed versions match these pins.
+harbor==0.24.0
+litellm==1.104.0

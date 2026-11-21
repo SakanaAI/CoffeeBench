@@ -12,8 +12,31 @@ class Model:
         pass
 
 
+# $0 scripted baselines (no API calls; never compacted; checkpointable).
+SCRIPTED_MODELS = (
+    "passive",
+    "heuristic_roaster",
+    "heuristic_roaster_v2",
+    "heuristic_farmer",
+    "heuristic_retailer",
+)
+
+def is_scripted(model: str) -> bool:
+    """True for a $0 scripted policy, optionally with a per-seat policy
+    profile: `heuristic_farmer@adversarial` (see the model modules' PROFILES)."""
+    return str(model).partition("@")[0] in SCRIPTED_MODELS
+
+
+# Rule background market (`launch_sim.py --bg Rule`): role → scripted model
+# that runs every non-focal agent of that role in-process.
+RULE_BG_MODELS = {
+    "farmer": "heuristic_farmer",
+    "roaster": "heuristic_roaster_v2",
+    "retailer": "heuristic_retailer",
+}
+
 VALID_EFFORTS = frozenset(
-    {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+    {"off", "default", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 
 
@@ -28,8 +51,11 @@ def get_model(model: str) -> Model:
     # provider's floor where it can't be fully disabled). Each provider maps the
     # level onto its native control: OpenAI `reasoning.effort`, Anthropic
     # `output_config.effort` (adaptive thinking), Gemini `thinking_level`,
-    # OpenRouter `reasoning_effort`. Temperature is always left at the provider
-    # default (never sent).
+    # OpenRouter `reasoning_effort`. `default` sends no reasoning/thinking
+    # control at all, so each provider runs at its own API default (Anthropic:
+    # thinking off; OpenAI: effort medium; Gemini 3: thinking_level high;
+    # OpenRouter: the model's default, reasoning on for Kimi/GLM/Qwen).
+    # Temperature is always left at the provider default (never sent).
     if model == "passive":
         # Null-provider baseline: always emits no tool call → env synthesises
         # `wait_for_next_day`. $0 API cost. Use as `--models 'roaster_A:passive'`.
@@ -42,6 +68,30 @@ def get_model(model: str) -> Model:
         from coffeebench.models.heuristic_roaster_model import HeuristicRoasterModel
 
         return HeuristicRoasterModel()
+    if model == "heuristic_roaster_v2":
+        # Stronger rule-based roaster baseline (lot costs, adaptive pricing,
+        # festival ramp, both green grades). $0 API cost.
+        from coffeebench.models.heuristic_roaster_v2_model import HeuristicRoasterV2Model
+
+        return HeuristicRoasterV2Model()
+    base_model, _, profile = model.partition("@")
+    if base_model == "heuristic_farmer":
+        # Rule-based background farmer (adaptive listing price, bounded
+        # concessions, production toward a sales-based target). $0.
+        # `heuristic_farmer@<profile>` selects a policy profile (PROFILES).
+        from coffeebench.models.heuristic_farmer_model import PROFILES, HeuristicFarmerModel
+
+        if profile and profile not in PROFILES:
+            raise ValueError(f"unknown heuristic_farmer profile {profile!r}; valid: {sorted(PROFILES)}")
+        return HeuristicFarmerModel(model=model, params=PROFILES.get(profile or "default"))
+    if base_model == "heuristic_retailer":
+        # Rule-based background retailer (buys cheapest roasted listings toward
+        # a sales-based target stock, adaptive retail prices). $0.
+        from coffeebench.models.heuristic_retailer_model import PROFILES, HeuristicRetailerModel
+
+        if profile and profile not in PROFILES:
+            raise ValueError(f"unknown heuristic_retailer profile {profile!r}; valid: {sorted(PROFILES)}")
+        return HeuristicRetailerModel(model=model, params=PROFILES.get(profile or "default"))
 
     # Split off the required ":<effort>" suffix shared by every provider.
     base, effort = model.rsplit(":", 1) if ":" in model else (model, None)
@@ -56,6 +106,10 @@ def get_model(model: str) -> Model:
             f"invalid reasoning effort '{effort}' in '{model}'; "
             f"valid values: {sorted(VALID_EFFORTS)}"
         )
+
+    if effort == "default":
+        # Every wrapper treats effort=None as "send no reasoning control".
+        effort = None
 
     if base.startswith("gpt-"):
         from coffeebench.models.openai_model import OpenAIModel

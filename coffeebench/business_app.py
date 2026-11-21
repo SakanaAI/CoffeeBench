@@ -5,31 +5,95 @@ own private books (cash, inventory, AR/AP). Public methods on this
 class are auto-registered as tools the LLM agent can call.
 """
 
-from dataclasses import asdict
+import math
+from collections.abc import Mapping
+from dataclasses import asdict, replace
 from typing import Callable, Optional
 
 from coffeebench.time_manager import TimeManager
-from coffeebench.typings import Invoice
+from coffeebench.typings import Invoice, Lot
 
 from coffeebench.marketplace import Marketplace
 from coffeebench.typings import AgentEndowment
 
 
-class _CostBasisView:
-    """Read-only WAVG view derived from inventory + inventory_total_cost.
+# Run-day stamped as `produced_day` on the starter-inventory lots of every
+# endowment. Day 0 = the stock is fresh at the run start, so it carries
+# its item's full shelf life (green 60 d -> expires day 60; roasted 21 d ->
+# expires day 21). The starter stock is sized for 1-2 days of trade, so
+# nothing expires before it can be sold; unsold starter stock does
+# expire inside the 90-day horizon like any other lot.
+INITIAL_LOT_PRODUCED_DAY = 0
 
-    The bench tracks `inventory_total_cost` (total $ held) as the source
-    of truth and exposes per-unit cost as `inventory_total_cost / qty`
-    on demand. Maintains the existing `.cost_basis.get(item, default)`
-    API used across the codebase (env, business_app, tests). Writes are
-    intentionally not supported — callers must update
-    `inventory_total_cost` directly so that the qty × total invariant
-    stays exact (no phantom-from-WAVG-rounding artefacts).
+
+def _fifo_key(lot: Lot) -> tuple:
+    """FIFO-by-expiry ordering: earliest expiry first (never-expiring
+    lots last), then oldest production. Python's sort is stable, so
+    ties keep insertion order (deterministic)."""
+    return (
+        lot.expiry_day is None,
+        lot.expiry_day if lot.expiry_day is not None else 0,
+        lot.produced_day,
+    )
+
+
+class _LotAggregateView(Mapping):
+    """Read-only {item_id: aggregate} view derived live from an agent's
+    lots. Lots are the source of truth for inventory; `inventory`
+    (sum of qty) and `inventory_total_cost` (sum of qty x unit_cost) are
+    exposed through this view so the many existing readers keep working.
+
+    Item assignment is deliberately unsupported (raises TypeError):
+    inventory must change through the lot helpers on BusinessApp so the
+    qty / cost aggregates can never drift apart. Indexing an item the
+    agent does not hold returns 0 (like the old zero-valued dict keys);
+    iteration / `dict(view)` only yields items with qty > 0.
     """
+
+    __slots__ = ("_ba", "_field")
+
+    def __init__(self, ba: "BusinessApp", field_name: str):
+        self._ba = ba
+        self._field = field_name  # "qty" | "cost"
+
+    def _agg(self) -> dict:
+        out: dict = {}
+        for lot in self._ba.lots:
+            if lot.qty <= 0:
+                continue
+            v = lot.qty if self._field == "qty" else lot.qty * lot.unit_cost
+            out[lot.item_id] = out.get(lot.item_id, 0) + v
+        return out
+
+    def __getitem__(self, item_id: str):
+        return self._agg().get(item_id, 0 if self._field == "qty" else 0.0)
+
+    def get(self, item_id: str, default=None):
+        agg = self._agg()
+        return agg[item_id] if item_id in agg else default
+
+    def __contains__(self, item_id: object) -> bool:
+        return item_id in self._agg()
+
+    def __iter__(self):
+        return iter(self._agg())
+
+    def __len__(self) -> int:
+        return len(self._agg())
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self._agg()!r})"
+
+
+class _CostBasisView:
+    """Read-only per-unit average cost view (lot value / lot qty per
+    item). Informational only: costing is per-lot FIFO and this average
+    is never used to book COGS. Keeps the `.cost_basis.get(item,
+    default)` API used across the codebase."""
 
     __slots__ = ("_inventory", "_total_cost")
 
-    def __init__(self, inventory: dict[str, int], total_cost: dict[str, float]):
+    def __init__(self, inventory: Mapping, total_cost: Mapping):
         self._inventory = inventory
         self._total_cost = total_cost
 
@@ -57,6 +121,47 @@ class _CostBasisView:
         return f"_CostBasisView({dict(self.items())})"
 
 
+# Upper bound on payment terms (net-N days) for listings and offers.
+# Matches the canonical 90-day horizon: longer terms could never fall
+# due inside the run.
+MAX_PAYMENT_TERMS_DAYS = 90
+# v2.1: hard sanity bound on a unit price (USD/kg; ~1,000× any real price) so
+# totals stay finite (1.7e308 used to give total_price = inf).
+MAX_UNIT_PRICE = 100_000.0
+MAX_MESSAGE_BODY_CHARS = 4000  # v2.1: DM body cap
+
+
+def _validate_price_and_terms(
+    price, payment_terms_days, price_name: str
+) -> tuple[float, int, str | None]:
+    """Shared validation for post_listing / make_offer. Returns
+    (price, terms, error_message_or_None)."""
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return 0.0, 0, f"{price_name} must be a number."
+    if not math.isfinite(price) or price <= 0:
+        return 0.0, 0, f"{price_name} must be a finite number > 0."
+    if price > MAX_UNIT_PRICE:
+        return 0.0, 0, f"{price_name} must be at most {MAX_UNIT_PRICE:,.0f} per kg."
+    if isinstance(payment_terms_days, bool):
+        return 0.0, 0, "payment_terms_days must be an integer."
+    try:
+        terms_f = float(payment_terms_days)
+    except (TypeError, ValueError):
+        return 0.0, 0, "payment_terms_days must be an integer."
+    if not math.isfinite(terms_f) or not terms_f.is_integer():
+        return 0.0, 0, "payment_terms_days must be an integer."
+    terms = int(terms_f)
+    if not 0 <= terms <= MAX_PAYMENT_TERMS_DAYS:
+        return (
+            0.0,
+            0,
+            f"payment_terms_days must be between 0 and {MAX_PAYMENT_TERMS_DAYS}.",
+        )
+    return price, terms, None
+
+
 class BusinessApp:
     def __init__(
         self,
@@ -73,17 +178,24 @@ class BusinessApp:
         self.time_manager = time_manager
 
         self.cash: float = float(endowment.initial_cash)
-        # {item_id: qty}
-        self.inventory: dict[str, int] = dict(endowment.initial_inventory)
-        # {item_id: total $ value of currently-held units}. The source of
-        # truth for inventory valuation under the WAVG accounting scheme.
-        # Always co-mutated with `self.inventory` so that
-        #   per-unit avg = inventory_total_cost[item] / inventory[item]
-        # `cost_basis` below is a read-only view; do not write to it.
-        self.inventory_total_cost: dict[str, float] = {
-            item_id: float(qty) * float(endowment.initial_cost_basis.get(item_id, 0.0))
-            for item_id, qty in self.inventory.items()
-        }
+        # Lot-based inventory (source of truth). Every unit of tangible
+        # stock belongs to one `Lot` with its own unit cost and expiry.
+        self.lots: list[Lot] = []
+        for item_id, qty in endowment.initial_inventory.items():
+            if int(qty) <= 0:
+                continue
+            self._add_lot(
+                item_id,
+                int(qty),
+                float(endowment.initial_cost_basis.get(item_id, 0.0)),
+                produced_day=INITIAL_LOT_PRODUCED_DAY,
+            )
+        # Derived read-only aggregates over `self.lots`:
+        #   inventory[item]            = sum of lot.qty
+        #   inventory_total_cost[item] = sum of lot.qty * lot.unit_cost
+        # `cost_basis` is the per-unit average of the two (display only).
+        self.inventory: _LotAggregateView = _LotAggregateView(self, "qty")
+        self.inventory_total_cost: _LotAggregateView = _LotAggregateView(self, "cost")
         self.cost_basis: "_CostBasisView" = _CostBasisView(
             self.inventory,
             self.inventory_total_cost,
@@ -108,8 +220,211 @@ class BusinessApp:
     def _today(self) -> int:
         return self.time_manager.get_current_day()
 
+    # ----- lot helpers (the only way inventory changes) -----
+    def _shelf_life_days(self, item_id: str) -> int | None:
+        item = self.marketplace.get_item(item_id)
+        if item is None or item.shelf_life_days is None:
+            return None
+        return int(item.shelf_life_days)
+
+    def _add_lot(
+        self,
+        item_id: str,
+        qty: int,
+        unit_cost: float,
+        produced_day: int,
+        expiry_day: int | None = None,
+        source_deal_id: str | None = None,
+        compute_expiry: bool = True,
+    ) -> Lot:
+        """Create a new lot on this agent's books. `expiry_day` defaults
+        to produced_day + the item's shelf life (pass compute_expiry=False
+        to keep an explicit None)."""
+        if expiry_day is None and compute_expiry:
+            life = self._shelf_life_days(item_id)
+            expiry_day = None if life is None else int(produced_day) + life
+        lot = Lot(
+            lot_id=self.marketplace.next_lot_id(),
+            item_id=item_id,
+            qty=int(qty),
+            unit_cost=float(unit_cost),
+            produced_day=int(produced_day),
+            expiry_day=expiry_day,
+            source_deal_id=source_deal_id,
+        )
+        self.lots.append(lot)
+        return lot
+
+    def _receive_lots(
+        self,
+        pieces: list[Lot],
+        unit_cost: float | None = None,
+        source_deal_id: str | None = None,
+    ) -> list[Lot]:
+        """Add lot pieces coming from another agent (delivery / return),
+        keeping their produced / expiry days. Each piece becomes a new lot
+        here (fresh lot_id) at `unit_cost` (None = keep the piece's)."""
+        out = []
+        for p in pieces:
+            if p.qty <= 0:
+                continue
+            out.append(
+                self._add_lot(
+                    p.item_id,
+                    p.qty,
+                    p.unit_cost if unit_cost is None else unit_cost,
+                    produced_day=p.produced_day,
+                    expiry_day=p.expiry_day,
+                    source_deal_id=source_deal_id,
+                    compute_expiry=False,
+                )
+            )
+        return out
+
+    def _restore_lots(self, pieces: list[Lot]) -> None:
+        """Put this agent's own previously-taken lot pieces back
+        unchanged (e.g. a cancelled deal's reservation): merged into the
+        surviving lot with the same id, else re-added as that lot."""
+        for p in pieces:
+            if p.qty <= 0:
+                continue
+            same = next((lt for lt in self.lots if lt.lot_id == p.lot_id), None)
+            if same is not None and same.unit_cost == p.unit_cost:
+                same.qty += p.qty
+            else:
+                self.lots.append(replace(p))
+
+    def _fifo_lots(self, item_id: str, min_expiry_day: int | None = None) -> list[Lot]:
+        """This agent's lots of `item_id` in FIFO-by-expiry order,
+        optionally restricted to lots still within shelf life on
+        `min_expiry_day` (expiry_day >= min_expiry_day)."""
+        lots = [
+            lt
+            for lt in self.lots
+            if lt.item_id == item_id
+            and lt.qty > 0
+            and (
+                min_expiry_day is None
+                or lt.expiry_day is None
+                or lt.expiry_day >= min_expiry_day
+            )
+        ]
+        return sorted(lots, key=_fifo_key)
+
+    def _sellable_qty(self, item_id: str, min_expiry_day: int | None) -> int:
+        return sum(lt.qty for lt in self._fifo_lots(item_id, min_expiry_day))
+
+    def _take_lots(
+        self,
+        item_id: str,
+        qty: int,
+        min_expiry_day: int | None = None,
+        prefer_source_deal: str | None = None,
+        only_source_deal: str | None = None,
+    ) -> list[Lot]:
+        """Remove `qty` units of `item_id` FIFO by expiry and return the
+        removed pieces (each keeps its lot_id, unit_cost and dates; the
+        sum of piece values is the FIFO cost of the units taken). Lots
+        expiring before `min_expiry_day` are skipped. With
+        `prefer_source_deal`, lots received through that deal are taken
+        first (still FIFO among them). Raises ValueError (no mutation) if
+        not enough qualifying units are held."""
+        qty = int(qty)
+        order = self._fifo_lots(item_id, min_expiry_day)
+        if only_source_deal is not None:
+            order = [lt for lt in order if lt.source_deal_id == only_source_deal]
+        if prefer_source_deal is not None:
+            order = [lt for lt in order if lt.source_deal_id == prefer_source_deal] + [
+                lt for lt in order if lt.source_deal_id != prefer_source_deal
+            ]
+        if sum(lt.qty for lt in order) < qty:
+            raise ValueError(
+                f"{self.agent_id}: insufficient {item_id} lots for {qty} units"
+            )
+        pieces: list[Lot] = []
+        remaining = qty
+        for lt in order:
+            if remaining <= 0:
+                break
+            take = min(lt.qty, remaining)
+            pieces.append(replace(lt, qty=take))
+            lt.qty -= take
+            remaining -= take
+        self.lots = [lt for lt in self.lots if lt.qty > 0]
+        return pieces
+
+    def _freshness_snapshot(
+        self, item_id: str, qty: int, delivery_day: int
+    ) -> dict | None:
+        """Public, static freshness snapshot stored on a listing at posting
+        time: only the earliest / latest expiry day of the FIFO lots that
+        would cover `qty` units arriving on `delivery_day`, plus the
+        as-of day. No quantities, holdings or production days (other
+        agents must not learn the seller's stock from it)."""
+        remaining = int(qty)
+        expiries: list[int] = []
+        for lt in self._fifo_lots(item_id, delivery_day):
+            if remaining <= 0:
+                break
+            remaining -= min(lt.qty, remaining)
+            if lt.expiry_day is not None:
+                expiries.append(lt.expiry_day)
+        if not expiries:
+            return None
+        return {
+            "earliest_expiry_day": min(expiries),
+            "latest_expiry_day": max(expiries),
+            "as_of_day": self._today(),
+        }
+
+    def _ship_freshness(self, item_id: str, qty: int, delivery_day: int) -> dict | None:
+        """OWNER-ONLY live view: freshness of the FIFO lots that would ship
+        if you accepted now, for `qty` units arriving on `delivery_day`
+        (no mutation). Only ever shown to the seller itself (it reveals
+        holdings); buyers see the listing's posting-time snapshot."""
+        remaining = int(qty)
+        expiries: list[int] = []
+        produced: list[int] = []
+        covered = 0
+        for lt in self._fifo_lots(item_id, delivery_day):
+            if remaining <= 0:
+                break
+            take = min(lt.qty, remaining)
+            remaining -= take
+            covered += take
+            produced.append(lt.produced_day)
+            if lt.expiry_day is not None:
+                expiries.append(lt.expiry_day)
+        if covered <= 0:
+            return None
+        out: dict = {"oldest_produced_day": min(produced)}
+        if expiries:
+            out["earliest_expiry_day"] = min(expiries)
+            out["latest_expiry_day"] = max(expiries)
+            out["min_days_left_on_arrival"] = min(expiries) - int(delivery_day)
+        if covered < int(qty):
+            out["note"] = (
+                f"seller currently holds only {covered} unit(s) that would "
+                f"still be within shelf life on arrival"
+            )
+        return out
+
+    def _expiring_lots(self, day: int, within_days: int) -> list[Lot]:
+        """Lots whose expiry_day is at most `within_days` after `day`."""
+        return sorted(
+            (
+                lt
+                for lt in self.lots
+                if lt.qty > 0
+                and lt.expiry_day is not None
+                and lt.expiry_day - int(day) <= int(within_days)
+            ),
+            key=_fifo_key,
+        )
+
     def _ar_outstanding(self) -> float:
-        return sum(inv.net_outstanding for inv in self.accounts_receivable)
+        return sum(max(0.0, inv.net_outstanding - getattr(inv, "credit_loss_allowance", 0.0))
+                   for inv in self.accounts_receivable)
 
     def _ap_outstanding(self) -> float:
         return sum(inv.net_outstanding for inv in self.accounts_payable)
@@ -153,7 +468,11 @@ class BusinessApp:
     def _inventory_cap_kg(self) -> int:
         from coffeebench.environment import ROLE_INVENTORY_CAP_KG
 
-        return int(ROLE_INVENTORY_CAP_KG.get(self.role, 10**9))
+        cap = int(ROLE_INVENTORY_CAP_KG.get(self.role, 10**9))
+        env = getattr(self, "_env", None)
+        if env is not None and getattr(env, "_upgrades", None):
+            cap += env.inventory_cap_bonus(self.agent_id, self._today())
+        return cap
 
     def _inventory_capacity_remaining_kg(self) -> int:
         return max(0, self._inventory_cap_kg() - self._effective_held_kg())
@@ -186,27 +505,25 @@ class BusinessApp:
         asking_price: float,
         payment_terms_days: int = 30,
     ) -> dict:
-        """Post a public listing on the marketplace. All other agents will see it.
+        """Post a public listing (see §4).
 
         Args:
-            item_id: id of the item from your inventory you want to sell.
-            qty: units to offer (must not exceed your current inventory of that item).
-            asking_price: PER-UNIT asking price in USD.
-            payment_terms_days: net-N from delivery (default 30). Pass a larger
-                number to extend (slower cash collection); pass a smaller one
-                to demand faster payment.
+            item_id: item to sell.
+            qty: kg (at most your current stock).
+            asking_price: USD per kg (at most 100,000).
+            payment_terms_days: requested terms, 0-90 days (default 30).
         """
         try:
             qty = int(qty)
-            asking_price = float(asking_price)
-            payment_terms_days = int(payment_terms_days)
         except (TypeError, ValueError):
-            return {
-                "status": "error",
-                "message": "qty must be int, asking_price float, payment_terms_days int.",
-            }
+            return {"status": "error", "message": "qty must be an integer."}
         if qty <= 0:
             return {"status": "error", "message": "qty must be > 0."}
+        asking_price, payment_terms_days, err = _validate_price_and_terms(
+            asking_price, payment_terms_days, "asking_price"
+        )
+        if err is not None:
+            return {"status": "error", "message": err}
         # Catalog is tangible-only; sellers must hold inventory backing.
         if self.inventory.get(item_id, 0) < qty:
             return {
@@ -220,6 +537,11 @@ class BusinessApp:
             asking_price=asking_price,
             payment_terms_days=payment_terms_days,
         )
+        listing.freshness_at_posting = self._freshness_snapshot(
+            item_id,
+            qty,
+            self._today() + self.marketplace._delivery_lag(self, item_id),
+        )
         return {
             "status": "success",
             "listing_id": listing.id,
@@ -230,11 +552,12 @@ class BusinessApp:
     def view_listings(
         self, item_id: str | None = None, only_others: bool = True
     ) -> dict:
-        """List currently OPEN listings on the marketplace.
+        """List open listings, with the expiry range of the seller's lots at
+        posting (`freshness_at_posting`; your own listings also `live_freshness`).
 
         Args:
-            item_id: filter to a single item id (optional).
-            only_others: if True (default), hide listings YOU posted.
+            item_id: only this item.
+            only_others: hide your own listings (default true).
         """
         rows = self.marketplace.listings_dump()
         out = []
@@ -243,8 +566,20 @@ class BusinessApp:
                 continue
             if only_others and r["seller_id"] == self.agent_id:
                 continue
+            if r["seller_id"] == self.agent_id:
+                r["live_freshness"] = self._ship_freshness(
+                    r["item_id"], r["qty"], self._today() + r["delivery_eta_days"]
+                )
             out.append(r)
-        return {"status": "success", "count": len(out), "listings": out}
+        return {
+            "status": "success",
+            "count": len(out),
+            "listings": out,
+            "note": (
+                "A listing's payment_terms_days is the seller's requested "
+                "terms; a deal uses the terms in the offer the seller accepts."
+            ),
+        }
 
     def make_offer(
         self,
@@ -254,21 +589,24 @@ class BusinessApp:
         payment_terms_days: int = 30,
         message: str = "",
     ) -> dict:
-        """Post an offer (bid) on someone else's listing. The seller can accept, reject, or counter via message.
+        """Make an offer on another business's open listing (see §4).
 
         Args:
-            listing_id: target listing id.
-            offered_price: PER-UNIT price you're willing to pay.
-            qty: how many units you want (≤ listing qty).
-            payment_terms_days: net-N you're proposing for payment (default 30).
-            message: optional message attached to the offer.
+            listing_id: listing id.
+            offered_price: USD per kg (at most 100,000).
+            qty: kg (at most the listing's remaining qty).
+            payment_terms_days: terms, 0-90 days (default 30).
+            message: note attached to the offer.
         """
         try:
-            offered_price = float(offered_price)
             qty = int(qty)
-            payment_terms_days = int(payment_terms_days)
         except (TypeError, ValueError):
-            return {"status": "error", "message": "Type error in offer params."}
+            return {"status": "error", "message": "qty must be an integer."}
+        offered_price, payment_terms_days, err = _validate_price_and_terms(
+            offered_price, payment_terms_days, "offered_price"
+        )
+        if err is not None:
+            return {"status": "error", "message": err}
         offer, msg = self.marketplace.make_offer(
             listing_id=listing_id,
             buyer_id=self.agent_id,
@@ -294,16 +632,29 @@ class BusinessApp:
         return {"status": "success", "offer_id": offer.id, "seller_id": offer.seller_id}
 
     def withdraw_offer(self, offer_id: str) -> dict:
-        """Withdraw an offer YOU previously made (only while it's still pending)."""
+        """Withdraw one of your pending offers."""
         ok, msg = self.marketplace.withdraw_offer(offer_id, self.agent_id)
         return {"status": "success" if ok else "error", "message": msg}
 
-    def accept_offer(self, offer_id: str) -> dict:
-        """Accept an offer made on YOUR listing. Creates a binding deal: inventory transfers next day, an invoice is issued (your AR / buyer's AP) with the agreed payment terms.
+    def reject_offer(self, offer_id: str) -> dict:
+        """Reject a pending offer on your listing (the listing stays open)."""
+        ok, msg = self.marketplace.reject_offer(offer_id, self.agent_id)
+        return {"status": "success" if ok else "error", "message": msg}
 
-        Args:
-            offer_id: pending offer on a listing you own.
-        """
+    def cancel_listing(self, listing_id: str) -> dict:
+        """Cancel one of your open listings (its pending offers are rejected)."""
+        n, msg = self.marketplace.cancel_listing(listing_id, self.agent_id)
+        if n < 0:
+            return {"status": "error", "message": msg}
+        return {
+            "status": "success",
+            "message": msg,
+            "listing_id": listing_id,
+            "pending_offers_rejected": n,
+        }
+
+    def accept_offer(self, offer_id: str) -> dict:
+        """Accept a pending offer on your listing (binding deal; see §4-5)."""
         deal, msg = self.marketplace.accept_offer(offer_id, self.agent_id)
         if deal is None:
             return {"status": "error", "message": msg}
@@ -322,10 +673,11 @@ class BusinessApp:
         }
 
     def view_offers(self, direction: str = "all") -> dict:
-        """View offers involving you.
+        """List offers involving you, with the expiry range of the lots that
+        would ship (`live_freshness` on offers you received).
 
         Args:
-            direction: "incoming" (offers on your listings, you decide), "outgoing" (offers you made), or "all".
+            direction: "incoming", "outgoing" or "all" (default).
         """
         return {
             "status": "success",
@@ -333,7 +685,7 @@ class BusinessApp:
         }
 
     def view_deals(self) -> dict:
-        """List every closed deal you participated in (as buyer or seller)."""
+        """List all deals you are party to."""
         from coffeebench.event_loop import format_min
 
         out = []
@@ -341,6 +693,19 @@ class BusinessApp:
             if d.seller_id != self.agent_id and d.buyer_id != self.agent_id:
                 continue
             row = asdict(d)
+            # Internal seller-side bookkeeping (reserved COGS / lot unit
+            # costs) is not shown; both parties see the shipped lots'
+            # quantities and dates instead.
+            row.pop("_reserved_seller_cogs", None)
+            row.pop("_reserved_lots", None)
+            row["lots"] = [
+                {
+                    "qty": p.qty,
+                    "produced_day": p.produced_day,
+                    "expiry_day": p.expiry_day,
+                }
+                for p in d._reserved_lots
+            ]
             row["deal_day"] = d.deal_at // 1440
             row["delivery_day"] = d.delivery_at // 1440
             row["accepted"] = format_min(d.deal_at)
@@ -348,33 +713,293 @@ class BusinessApp:
             out.append(row)
         return {"status": "success", "count": len(out), "deals": out}
 
-    # ===== TOOLS — retail (shop-only effective) =====
-    def set_retail_price(self, item_id: str, price_per_unit: float) -> dict:
-        """Set your storefront price for a consumer-facing item. The env
-        runs a scripted consumer-demand model each day across all
-        retailers; consumers buy at the price you set, capped by your
-        on-hand inventory of that item, only if your price is at or
-        below their reservation price. Setting `price_per_unit=0`
-        delists the item.
+    def view_dashboard(self) -> dict:
+        """Show a compact snapshot: cash, AR, AP, stock and lots expiring within
+        3 days, your listings and offers (both directions), deals in flight,
+        overdue and soon-due invoices, new messages, pending production/roasts
+        (retailers: prices and yesterday's sales). Long sections are capped.
+        """
+        from coffeebench.environment import EXPIRY_WARNING_DAYS
+        from coffeebench.event_loop import MINUTES_PER_DAY, format_min
 
-        Two consumer-facing items: `roasted_coffee_kg` (commodity,
-        reservation $30/kg) and `roasted_specialty_kg` (premium,
-        reservation $80/kg). Price each independently. Pricing above
-        the reservation forfeits BOTH the elastic share AND the
-        inelastic-floor demand for that item that day. COGS is
-        deducted at WAVG cost on every sale.
+        env = getattr(self, "_env", None)
+        mp = self.marketplace
+        today = self._today()
+        now = self.time_manager.get_virtual_min()
+        # "Since your last call" is tracked by position in the message log
+        # (not by timestamp: agents in one dispatch bucket share a minute).
+        last_call = getattr(self, "_last_dashboard_at", None)
+        seen_upto = getattr(self, "_last_dashboard_msg_idx", 0)
+        self._last_dashboard_at = now
+        self._last_dashboard_msg_idx = len(mp.messages)
+
+        def capped(rows: list, cap: int, tool: str) -> dict:
+            out = {"rows": rows[:cap]}
+            if len(rows) > cap:
+                out["omitted"] = len(rows) - cap
+                out["more_via"] = tool
+            return out
+
+        # Inventory.
+        inv_rows = []
+        for item_id, qty in sorted(self.inventory.items()):
+            lots = self._fifo_lots(item_id)
+            exp = [lt.expiry_day for lt in lots if lt.expiry_day is not None]
+            inv_rows.append(
+                {
+                    "item_id": item_id,
+                    "qty": int(qty),
+                    "value": round(self.inventory_total_cost.get(item_id, 0.0), 2),
+                    "earliest_expiry_day": min(exp) if exp else None,
+                }
+            )
+        expiring = [
+            {
+                "lot_id": lt.lot_id,
+                "item_id": lt.item_id,
+                "qty": lt.qty,
+                "expiry_day": lt.expiry_day,
+                "days_left": lt.expiry_day - today,
+            }
+            for lt in self._expiring_lots(today, EXPIRY_WARNING_DAYS)
+        ]
+
+        # Listings / offers.
+        offers = mp.offers
+        listings = [
+            lt
+            for lt in mp.listings
+            if lt.seller_id == self.agent_id and lt.status == "open"
+        ]
+        listing_rows = [
+            {
+                "id": lt.id,
+                "item_id": lt.item_id,
+                "qty": lt.qty,
+                "asking_price": lt.asking_price,
+                "pending_offers": sum(
+                    1 for o in offers if o.listing_id == lt.id and o.status == "pending"
+                ),
+            }
+            for lt in listings
+        ]
+        item_of = {lt.id: lt.item_id for lt in mp.listings}
+        incoming = [
+            {
+                "id": o.id,
+                "listing_id": o.listing_id,
+                "item_id": item_of.get(o.listing_id),
+                "buyer": o.buyer_id,
+                "price": o.offered_price,
+                "qty": o.qty,
+                "terms_days": o.payment_terms_days,
+                "expires_eod_day": o.posted_at // MINUTES_PER_DAY + 1,
+            }
+            for o in offers
+            if o.seller_id == self.agent_id and o.status == "pending"
+        ]
+        outgoing = [
+            {
+                "id": o.id,
+                "listing_id": o.listing_id,
+                "item_id": item_of.get(o.listing_id),
+                "seller": o.seller_id,
+                "price": o.offered_price,
+                "qty": o.qty,
+                "status": o.status,
+            }
+            for o in reversed(offers)
+            if o.buyer_id == self.agent_id
+            and (o.status == "pending" or o.posted_at // MINUTES_PER_DAY >= today - 1)
+        ]
+
+        # Deals in flight.
+        in_flight = []
+        for d in env._pending_shipments if env is not None else []:
+            if self.agent_id not in (d.buyer_id, d.seller_id):
+                continue
+            inbound = d.buyer_id == self.agent_id
+            in_flight.append(
+                {
+                    "deal_id": d.id,
+                    "direction": "inbound" if inbound else "outbound",
+                    "counterparty": d.seller_id if inbound else d.buyer_id,
+                    "item_id": d.item_id,
+                    "qty": d.qty,
+                    "unit_price": d.unit_price,
+                    "delivery_day": d.delivery_at // MINUTES_PER_DAY,
+                }
+            )
+        in_flight.sort(key=lambda r: r["delivery_day"])
+
+        # Invoices: overdue or due within 5 days.
+        def due_rows(invoices: list) -> list:
+            rows = []
+            for inv in invoices:
+                net = inv.net_outstanding
+                if net <= 0.01 or inv.due_date > today + 5:
+                    continue
+                rows.append(
+                    {
+                        "id": inv.id,
+                        "counterparty": (
+                            inv.payer if inv.issuer == self.agent_id else inv.issuer
+                        ),
+                        "outstanding": round(net, 2),
+                        "due_day": inv.due_date,
+                        "overdue": inv.due_date < today,
+                    }
+                )
+            return sorted(rows, key=lambda r: (r["due_day"], r["id"]))
+
+        # Messages.
+        visible = mp.messages_visible_to(self.agent_id)
+        unread = mp.unread_messages_for(self.agent_id)
+        new_ids = {m.id for m in mp.messages[seen_upto:]}
+        recent = [m for m in visible if m.id in new_ids]
+        unread_ids = {m.id for m in unread}
+        shown = {m.id: m for m in unread}
+        shown.update({m.id: m for m in recent})
+        msg_rows = [
+            {
+                "id": m.id,
+                "sent": format_min(m.sent_at),
+                "from": m.sender_id,
+                "to": m.recipient_id,
+                "title": m.title,
+                "unread": m.id in unread_ids,
+                "thread_id": m.thread_id or m.id,
+                "reply_to": self._reply_ref(m),
+            }
+            for m in sorted(shown.values(), key=lambda m: m.sent_at, reverse=True)
+        ]
+
+        out = {
+            "status": "success",
+            "as_of": format_min(now),
+            "headline": {
+                "cash": round(self.cash, 2),
+                "inventory_value": round(self._inventory_value(), 2),
+                "ar": round(self._ar_outstanding(), 2),
+                "ap": round(self._ap_outstanding(), 2),
+            },
+            "inventory": {
+                "by_item": inv_rows,
+                "expiring_within_3d": capped(expiring, 5, "view_inventory"),
+                "on_hand_kg": self._total_inventory_kg(),
+                "in_flight_inbound_kg": self._pending_inbound_kg(),
+                "cap_kg": self._inventory_cap_kg(),
+            },
+            "my_open_listings": capped(listing_rows, 5, "view_offers / view_listings"),
+            "offers_on_my_listings": capped(incoming, 5, "view_offers('incoming')"),
+            "my_offers": capped(outgoing, 5, "view_offers('outgoing')"),
+            "deals_in_flight": capped(in_flight, 5, "view_deals"),
+            "payables_due": capped(due_rows(self.accounts_payable), 5, "view_payables"),
+            "receivables_due": capped(
+                due_rows(self.accounts_receivable), 5, "view_receivables"
+            ),
+            "messages": {
+                "unread_total": len(unread),
+                "since": (
+                    format_min(last_call) if last_call is not None else "run start"
+                ),
+                **capped(msg_rows, 8, "view_messages"),
+            },
+        }
+        if env is not None and self.role == "farmer":
+            out["pending_production"] = [
+                {"item_id": p["item_id"], "qty": p["qty"], "ready_day": p["ready_day"]}
+                for p in env._pending_production
+                if p["agent_id"] == self.agent_id
+            ]
+        if env is not None and self.role == "roaster":
+            out["pending_roasts"] = [
+                {
+                    "output_item": r["output_item"],
+                    "output_qty": r["output_qty"],
+                    "ready_day": r["ready_day"],
+                }
+                for r in env._pending_roasting
+                if r["agent_id"] == self.agent_id
+            ]
+        if self.role == "retailer":
+            sales: dict[str, dict] = {}
+            for s in getattr(env, "consumer_sales_log", []) or []:
+                if s.get("shop_id") != self.agent_id or s.get("day") != today - 1:
+                    continue
+                row = sales.setdefault(s["item_id"], {"qty": 0, "revenue": 0.0})
+                row["qty"] += int(s.get("qty", 0))
+                row["revenue"] = round(
+                    row["revenue"] + float(s.get("total_price", 0.0)), 2
+                )
+            out["retail"] = {
+                "prices": dict(self.retail_prices),
+                "yesterday_consumer_sales": sales,
+            }
+        return out
+
+    def view_inventory(self, item_id: str | None = None) -> dict:
+        """List your stock lot by lot (qty, unit cost, produced and expiry day).
 
         Args:
-            item_id: id of a consumer-facing item (`roasted_coffee_kg`
-                or `roasted_specialty_kg`).
-            price_per_unit: USD per kg. Set to 0 to delist.
+            item_id: only this item.
+        """
+        today = self._today()
+        rows = []
+        for lt in sorted(self.lots, key=lambda x: (x.item_id, _fifo_key(x))):
+            if item_id is not None and lt.item_id != item_id:
+                continue
+            rows.append(
+                {
+                    "lot_id": lt.lot_id,
+                    "item_id": lt.item_id,
+                    "qty": lt.qty,
+                    "unit_cost": round(lt.unit_cost, 4),
+                    "value": round(lt.value, 2),
+                    "produced_day": lt.produced_day,
+                    "expiry_day": lt.expiry_day,
+                    "days_left": (
+                        lt.expiry_day - today if lt.expiry_day is not None else None
+                    ),
+                }
+            )
+        totals = {
+            k: {
+                "qty": int(q),
+                "value": round(self.inventory_total_cost.get(k, 0.0), 2),
+            }
+            for k, q in sorted(self.inventory.items())
+            if item_id is None or k == item_id
+        }
+        return {
+            "status": "success",
+            "today": today,
+            "lots": rows,
+            "totals_by_item": totals,
+            "note": (
+                "Lots listed per item in FIFO order (next to ship / roast / "
+                "sell first). days_left = expiry_day - today; 0 = written "
+                "off at tonight's EOD."
+            ),
+        }
+
+    # ===== TOOLS — retail (shop-only effective) =====
+    def set_retail_price(self, item_id: str, price_per_unit: float) -> dict:
+        """Set your consumer price for a roasted item (retailer only; see §8).
+
+        Args:
+            item_id: roasted_coffee_kg or roasted_specialty_kg.
+            price_per_unit: USD per kg (0 delists).
         """
         try:
             price = float(price_per_unit)
         except (TypeError, ValueError):
             return {"status": "error", "message": "price_per_unit must be numeric."}
-        if price < 0:
-            return {"status": "error", "message": "price_per_unit must be ≥ 0."}
+        if not math.isfinite(price) or price < 0 or price > MAX_UNIT_PRICE:
+            return {"status": "error", "message": f"price_per_unit must be a finite number in [0, {MAX_UNIT_PRICE:,.0f}]."}
+        item = self.marketplace.get_item(item_id)
+        if item is None or item.retail_reservation_price is None:
+            return {"status": "error", "message": f"'{item_id}' is not a consumer item."}
         if price == 0:
             self.retail_prices.pop(item_id, None)
             return {
@@ -394,15 +1019,11 @@ class BusinessApp:
         }
 
     def view_consumer_sales(self, since_day: int | None = None) -> dict:
-        """Return YOUR shop's consumer-sale history (env auto-sells from
-        your inventory at the retail prices you set; this tool lets you
-        read those sales back).
-
-        Each row carries: day, item_id, qty, unit_price, total_price,
-        share. Retailer-only — other roles see no sales here.
+        """List your shop's consumer sales (day, item, qty, unit price,
+        total, share).
 
         Args:
-            since_day: only sales on or after this day.
+            since_day: only from this day on.
         """
         env = getattr(self.marketplace, "_env", None)
         if env is None:
@@ -418,18 +1039,11 @@ class BusinessApp:
         return {"status": "success", "count": len(out), "sales": out}
 
     def view_market_aggregate(self, days_back: int = 7) -> dict:
-        """Snapshot total CONSUMER-side market activity over the last
-        `days_back` days, aggregated across BOTH retailers (i.e. the
-        whole market — not just your own sales). One row per
-        (item, day) reporting total qty sold and average per-kg price
-        achieved across the market that day. Useful for forecasting
-        demand and pricing pressure regardless of role: farmers /
-        roasters can plan B2B supply against observed downstream
-        consumer pull, and retailers can benchmark their own share
-        against the aggregate.
+        """Show consumer sales across both retailers per (item, day): kg
+        sold and average price per kg.
+
         Args:
-            days_back: integer days back from today to include
-                (e.g. 7 = last 7 days incl. today). Clamped to ≥ 1.
+            days_back: days up to and including today (default 7).
         """
         env = getattr(self.marketplace, "_env", None)
         if env is None:
@@ -505,8 +1119,15 @@ class BusinessApp:
             )
             it["avg_unit_price"] = round((rev / qty) if qty > 0 else 0.0, 2)
             item_summary.append(it)
+        out_extra = {}
+        if getattr(env, "mechanics", None) and env.mechanics.get("demand_patterns"):
+            from coffeebench.mechanics import weather_forecast
+
+            # E3: the published (accurate) weather forecast.
+            out_extra["weather_forecast"] = weather_forecast(env.mechanics, today)
         return {
             "status": "success",
+            **out_extra,
             "window_start_day": max(0, cutoff),
             "window_end_day": today,
             "n_days": n,
@@ -521,26 +1142,13 @@ class BusinessApp:
         quantity_kg: int,
         reason: str = "",
     ) -> dict:
-        """Return some or all of a delivered tangible-goods order against an
-        invoice. Only available to the original BUYER, and only within
-        the env's `RETURN_WINDOW_DAYS` from the invoice's issue_date.
-
-        On a successful return:
-          - The returned qty leaves your inventory and goes back to the seller's.
-          - The invoice's `credited_amount` grows by qty × original unit_price.
-            If the credited amount equals the principal, the invoice is flagged
-            `returned`. If you had already paid the invoice, the seller refunds
-            you the credited amount in cash.
-          - Truth ledger: seller logs `sale_reversal` and `inventory_in`; buyer
-            logs `inventory_out` (and `cash_in` for any refund). The seller's
-            recognized revenue effectively drops by qty × unit_price.
+        """Return goods you bought (see §5).
 
         Args:
-            invoice_id: AP invoice id you want to return against (must be a
-                tangible-goods deal you bought).
-            quantity_kg: integer units to return. Bounded by `coffeebench.qty - already_returned`
-                AND by the qty you currently hold in inventory.
-            reason: optional free-form note (e.g. "quality issue", "over-stock").
+            invoice_id: invoice of the delivery.
+            quantity_kg: kg (at most the kg received in that delivery, not yet
+                returned, that you still hold with at least 3 days of shelf life).
+            reason: note.
         """
         env = getattr(self.marketplace, "_env", None)
         if env is None:
@@ -607,12 +1215,22 @@ class BusinessApp:
                     f"on this deal (already returned {deal.returned_qty}/{deal.qty})."
                 ),
             }
-        # Inventory cap.
-        on_hand = self.inventory.get(deal.item_id, 0)
-        if qty > on_hand:
+        # v2.1: only units received through THIS delivery and still saleable
+        # (>= RETURN_MIN_SHELF_DAYS of shelf life) can go back — no substituting
+        # cheaper lots from another supplier, no dumping near-expiry stock.
+        from coffeebench.environment import RETURN_MIN_SHELF_DAYS
+
+        min_expiry = today + RETURN_MIN_SHELF_DAYS
+        returnable = sum(
+            lt.qty for lt in self._fifo_lots(deal.item_id, min_expiry) if lt.source_deal_id == deal.id
+        )
+        if qty > returnable:
             return {
                 "status": "error",
-                "message": f"You hold only {on_hand} units of '{deal.item_id}' — cannot return {qty}.",
+                "message": (
+                    f"Only {returnable} units received in this delivery are still held with at least "
+                    f"{RETURN_MIN_SHELF_DAYS} days of shelf life left — cannot return {qty}."
+                ),
             }
 
         # Locate seller. Marketplace.business_apps is the env-wired registry.
@@ -622,36 +1240,44 @@ class BusinessApp:
                 "status": "error",
                 "message": "Seller's BusinessApp not registered.",
             }
+        if deal.seller_id in env._bankrupt_agents:
+            return {
+                "status": "error",
+                "message": f"Seller {deal.seller_id} is bankrupt; returns are closed.",
+            }
 
         unit_price = float(deal.unit_price)
         credit = round(qty * unit_price, 2)
+        # A paid invoice is credited by a cash refund. Refuse up front if
+        # the seller cannot fund it, rather than crediting the invoice and
+        # silently dropping the unfunded part of the refund.
+        if invoice.paid and seller.cash < credit:
+            return {
+                "status": "error",
+                "message": (
+                    f"Seller {deal.seller_id} cannot fund a ${credit:.2f} refund "
+                    f"on this paid invoice right now."
+                ),
+            }
 
-        # Apply: buyer inventory --> seller inventory (at seller's pre-sale WAVG).
-        # We approximate seller's original COGS-per-unit by storing it on the
-        # truth ledger via the original sale's inventory_out entry; for the
-        # current value we use the seller's CURRENT WAVG cost, which is the
-        # closest available proxy. (Returned goods rejoining inventory blend
-        # into seller's stock at this proxy cost, so a back-and-forth doesn't
-        # gradually shift the basis far from reality.)
-        # Buyer: drop qty + proportional total_cost.
-        buyer_avg = (
-            (self.inventory_total_cost.get(deal.item_id, 0.0) / on_hand)
-            if on_hand > 0
-            else 0.0
-        )
-        buyer_value_removed = qty * buyer_avg
-        self.inventory[deal.item_id] = on_hand - qty
-        self.inventory_total_cost[deal.item_id] = (
-            self.inventory_total_cost.get(deal.item_id, 0.0) - buyer_value_removed
-        )
-        # Seller: blend returned units back at seller's current WAVG.
-        old_qty = seller.inventory.get(deal.item_id, 0)
-        old_total = seller.inventory_total_cost.get(deal.item_id, 0.0)
-        old_cost = (old_total / old_qty) if old_qty > 0 else 0.0
-        return_unit_cost = old_cost
-        return_value = qty * return_unit_cost
-        seller.inventory[deal.item_id] = old_qty + qty
-        seller.inventory_total_cost[deal.item_id] = old_total + return_value
+        # Buyer: the returned units leave FIFO by expiry, taking the lots
+        # received through THIS deal first (you send back what you got;
+        # FIFO among them), then any other lots of the item. They are
+        # removed at their own lot cost (deal lots carry the deal price),
+        # so the gap to the credit below is zero unless the deal's own
+        # lots were already sold / consumed. Any gap is booked as a COGS
+        # adjustment so Δequity == audit NI on the buyer side too.
+        returned_pieces = self._take_lots(deal.item_id, qty, min_expiry_day=min_expiry,
+                                          only_source_deal=deal.id)
+        buyer_value_removed = sum(p.value for p in returned_pieces)
+        # Seller: the same pieces come back with their ORIGINAL produced /
+        # expiry days, restocked at the ORIGINAL unit COGS pinned on the
+        # deal at accept_offer time — the same basis the cogs_reversal
+        # below uses, so the return is NI-neutral beyond the revenue
+        # reversal.
+        unit_cogs_at_sale = deal._reserved_seller_cogs / deal.qty
+        return_unit_cost = unit_cogs_at_sale
+        seller._receive_lots(returned_pieces, unit_cost=return_unit_cost)
 
         deal.returned_qty += qty
         invoice.credited_amount = round(invoice.credited_amount + credit, 2)
@@ -659,23 +1285,48 @@ class BusinessApp:
         if invoice.credited_amount + 1e-9 >= invoice.amount:
             invoice.returned = True
             invoice.returned_date = today
+            # A fully returned invoice drops out of AR/AP (net_outstanding
+            # → 0), which would also erase accrued late fees that were
+            # already booked as interest. Forgive them explicitly so the
+            # truth ledger matches the balance sheet on both sides.
+            forgiven = invoice.late_fees_accrued if not invoice.paid else 0.0
+            if forgiven > 0 and self._record_truth is not None:
+                memo = f"late fees forgiven on full return of {invoice.id}"
+                self._record_truth(
+                    self.agent_id,
+                    "interest_expense",
+                    amount=-forgiven,
+                    counterparty=seller.agent_id,
+                    reference=invoice.id,
+                    memo=memo,
+                )
+                self._record_truth(
+                    seller.agent_id,
+                    "interest_revenue",
+                    amount=-forgiven,
+                    counterparty=self.agent_id,
+                    reference=invoice.id,
+                    memo=memo,
+                )
+                invoice.late_fees_accrued = 0.0
 
         # Cash refund if invoice was already paid.
         refund = 0.0
         if invoice.paid:
-            refund = round(min(credit, seller.cash), 2)
-            # If seller is broke, they refund what they have; the rest stays
-            # owed informally — no AP/AR mechanic for refund balance in v1.
+            # Funding was checked above, so the full credit is refunded.
+            refund = credit
             seller.cash -= refund
             self.cash += refund
 
         # Truth-ledger: seller-side sale_reversal (revenue ↓) + inventory_in
         # (balance-sheet only) + cogs_reversal (cogs ↓, mirrors the original
         # sale's inventory_out so audit cogs reflects only kg actually sold).
-        # Buyer side has NO income-statement entry — a purchase return is not
-        # a sale, so it carries no cogs; the AP credit + inventory drop already
-        # close the books on the equity side. Cash flows recorded separately
-        # when a refund happens.
+        # Buyer side: the credit (AP ↓ or cash refund) differs from the FIFO
+        # lot cost of the kg removed whenever those lots' cost ≠ deal price.
+        # That gap is a realized gain/loss on the purchase return; book it as
+        # a COGS adjustment (cogs_reversal if gain, inventory_out if loss,
+        # quantity 0 so kg-based COGS metrics are unaffected). Cash flows
+        # recorded separately when a refund happens.
         if self._record_truth is not None:
             self._record_truth(
                 seller.agent_id,
@@ -695,13 +1346,12 @@ class BusinessApp:
                 item=deal.item_id,
                 quantity=qty,
                 reference=deal.id,
-                memo=f"goods returned at WAVG ${return_unit_cost:.2f}/unit",
+                memo=f"goods returned at original COGS ${return_unit_cost:.2f}/unit",
             )
             # A3: reverse the original sale's cogs in proportion to qty
             # returned. Uses Deal._reserved_seller_cogs (snapshotted at
             # accept_offer time) so the reversal is exact w.r.t. the
-            # original cogs, not the seller's current WAVG.
-            unit_cogs_at_sale = deal._reserved_seller_cogs / deal.qty
+            # original cogs and equals the inventory_in above.
             self._record_truth(
                 seller.agent_id,
                 "cogs_reversal",
@@ -712,6 +1362,21 @@ class BusinessApp:
                 reference=deal.id,
                 memo=f"cogs reversal on return @ ${unit_cogs_at_sale:.2f}/unit",
             )
+            buyer_gap = credit - buyer_value_removed
+            if abs(buyer_gap) >= 0.005:
+                self._record_truth(
+                    self.agent_id,
+                    "cogs_reversal" if buyer_gap > 0 else "inventory_out",
+                    amount=round(abs(buyer_gap), 2),
+                    counterparty=seller.agent_id,
+                    item=deal.item_id,
+                    quantity=0,
+                    reference=deal.id,
+                    memo=(
+                        f"purchase-return cost adjustment: credit "
+                        f"${credit:.2f} vs FIFO lot cost ${buyer_value_removed:.2f}"
+                    ),
+                )
             if refund > 0:
                 self._record_truth(
                     seller.agent_id,
@@ -754,18 +1419,11 @@ class BusinessApp:
 
     # ===== TOOLS — production =====
     def produce_item(self, item_id: str, quantity: int) -> dict:
-        """Produce more units of a producible item from your cash. Each item
-        carries `produced_by_role` (only that role can mint it),
-        `production_cost_per_unit` (paid from your cash at call time),
-        `daily_production_cap` (per-agent per-item kg/day cap, resets at
-        the start of each day), and `production_lag_days` (delay between
-        the call and the units landing in inventory). Output blends into
-        your WAVG cost basis at the production cost when it materialises.
+        """Produce green coffee (farmer only; see §3).
 
         Args:
-            item_id: id of an item whose `produced_by_role` matches your role.
-            quantity: integer units to produce, > 0, ≤ today's remaining
-                capacity for this item, and ≤ what your cash covers.
+            item_id: green_coffee_kg or green_specialty_kg.
+            quantity: kg.
         """
         env = getattr(self.marketplace, "_env", None)
         if env is None:
@@ -793,8 +1451,20 @@ class BusinessApp:
         if qty <= 0:
             return {"status": "error", "message": "quantity must be > 0."}
 
-        # Flat daily production cap (no seasonal multiplier).
+        # Flat daily production cap (no seasonal multiplier), except on the
+        # days of an optional D2 supply shock (coffeebench.mechanics).
+        from coffeebench.mechanics import supply_factors
+
+        from coffeebench.mechanics import trait
+
+        sched = getattr(env, "mechanics", None)
+        cap_f, cost_f = supply_factors(sched, item_id, self._today())
+        # E1: per-farm environment traits (cost level / capacity).
+        cap_f *= trait(sched, self.agent_id, "production_cap_factor", 1.0)
+        cost_f *= trait(sched, self.agent_id, "production_cost_factor", 1.0)
         cap = int(item.daily_production_cap or 0)
+        if cap_f != 1.0:
+            cap = int(cap * cap_f + 1e-9)
         key = f"{self.agent_id}::{item_id}"
         used = env._production_used_today.get(key, 0)
         remaining = cap - used
@@ -830,6 +1500,8 @@ class BusinessApp:
             }
 
         unit_cost = float(item.production_cost_per_unit or 0.0)
+        if cost_f != 1.0:
+            unit_cost = round(unit_cost * cost_f, 4)
         total_cost = round(qty * unit_cost, 2)
         if self.cash < total_cost:
             return {
@@ -892,27 +1564,12 @@ class BusinessApp:
 
     # ===== TOOLS — roasting (roaster only) =====
     def roast(self, green_item_id: str, qty_kg: int) -> dict:
-        """Convert green beans from your inventory into roasted beans.
-        Roaster-role only. One unified action covers BOTH product
-        lines via `green_item_id`:
-
-          - `green_coffee_kg`    → `roasted_coffee_kg`    (commodity:
-                                   $3/kg labor, yield 0.85, 1-day lag).
-          - `green_specialty_kg` → `roasted_specialty_kg` (premium:
-                                   $5/kg labor, yield 0.82, 1-day lag).
-
-        Both recipes SHARE one 50 kg/day total green-input cap (same
-        physical equipment). Cash + green leave immediately; the
-        roasted output lands in inventory after the recipe's lag.
-        Effective COGS per roasted kg = (green WAVG + labor) / yield,
-        blended into the output's WAVG cost basis at materialize time.
+        """Roast green coffee (roaster only; see §3). The output lot's unit cost
+        is (green cost + labor) / output kg.
 
         Args:
-            green_item_id: input item id (`green_coffee_kg` or
-                `green_specialty_kg`).
-            qty_kg: integer kg of green beans to roast. Must be > 0,
-                ≤ today's remaining shared cap, ≤ green inventory you
-                hold of that item, and your cash must cover labor.
+            green_item_id: green_coffee_kg or green_specialty_kg.
+            qty_kg: kg of green input.
         """
         env = getattr(self.marketplace, "_env", None)
         if env is None:
@@ -925,10 +1582,7 @@ class BusinessApp:
             return {"status": "error", "message": "qty_kg must be an integer."}
         if qty_kg <= 0:
             return {"status": "error", "message": "qty_kg must be > 0."}
-        from coffeebench.environment import (
-            ROAST_DAILY_CAP_GREEN_KG,
-            ROAST_RECIPES,
-        )
+        from coffeebench.environment import ROAST_RECIPES
 
         recipe = ROAST_RECIPES.get(green_item_id)
         if recipe is None:
@@ -944,23 +1598,27 @@ class BusinessApp:
         yield_used = float(recipe["yield"])
         lag_days = int(recipe["lag_days"])
 
-        held_green = self.inventory.get(green_item_id, 0)
+        # Only lots still within shelf life today can be roasted (lots
+        # past expiry are written off at EOD; normally none are on hand).
+        today = self._today()
+        held_green = self._sellable_qty(green_item_id, today)
         if held_green < qty_kg:
             return {
                 "status": "error",
                 "message": (
-                    f"You only hold {held_green} kg of {green_item_id}; "
-                    f"requested {qty_kg} kg."
+                    f"You only hold {held_green} kg of {green_item_id} within "
+                    f"shelf life; requested {qty_kg} kg."
                 ),
             }
         used = env._roast_used_today.get(self.agent_id, 0)
-        remaining_cap = ROAST_DAILY_CAP_GREEN_KG - used
+        roast_cap = env.roast_cap_for(self.agent_id, today)
+        remaining_cap = roast_cap - used
         if qty_kg > remaining_cap:
             return {
                 "status": "error",
                 "message": (
                     f"Today's shared roasting capacity is "
-                    f"{ROAST_DAILY_CAP_GREEN_KG} kg of green (commodity "
+                    f"{roast_cap} kg of green (commodity "
                     f"+ specialty combined). Already used {used} kg; "
                     f"only {remaining_cap} kg remaining today."
                 ),
@@ -970,7 +1628,18 @@ class BusinessApp:
         # and queues `roasted_yield` kg for materialise (so pending_inbound
         # rises by roasted_yield). Effective post-call commitment:
         #   on_hand − qty_kg + pending + roasted_yield
-        roasted_yield = max(0, int(round(qty_kg * yield_used)))
+        # Whole-kg output, rounded DOWN so roasting never creates mass
+        # (round() turned e.g. 30 kg × 0.85 = 25.5 into 26 kg). The small
+        # epsilon keeps exact products like 20 × 0.85 = 16.999… at 17.
+        roasted_yield = max(0, int(math.floor(qty_kg * yield_used + 1e-9)))
+        if roasted_yield <= 0:
+            return {
+                "status": "error",
+                "message": (
+                    f"Roasting {qty_kg} kg yields 0 whole kg at "
+                    f"{yield_used:.0%} yield; roast a larger batch."
+                ),
+            }
         inv_cap = self._inventory_cap_kg()
         on_hand = self._total_inventory_kg()
         pending = self._pending_inbound_kg()
@@ -998,12 +1667,10 @@ class BusinessApp:
                     f"{green_item_id} at ${labor_per_kg:.2f}/kg."
                 ),
             }
-        # Consume green at current WAVG; deduct both qty and total cost.
-        green_total = self.inventory_total_cost.get(green_item_id, 0.0)
-        green_unit_cost = (green_total / held_green) if held_green > 0 else 0.0
-        green_value_consumed = qty_kg * green_unit_cost
-        self.inventory[green_item_id] = held_green - qty_kg
-        self.inventory_total_cost[green_item_id] = green_total - green_value_consumed
+        # Consume green FIFO by expiry at each lot's own cost.
+        green_pieces = self._take_lots(green_item_id, qty_kg, min_expiry_day=today)
+        green_value_consumed = sum(p.value for p in green_pieces)
+        green_unit_cost = green_value_consumed / qty_kg
         self.cash -= labor_cost
         env._roast_used_today[self.agent_id] = used + qty_kg
         # Output total cost = ACTUAL spent. We derive per-roasted-kg cost
@@ -1026,6 +1693,15 @@ class BusinessApp:
                 "yield_used": yield_used,
                 "labor_cost": labor_cost,
                 "input_value_consumed": green_value_consumed,
+                "input_lots": [
+                    {
+                        "lot_id": p.lot_id,
+                        "qty": p.qty,
+                        "unit_cost": p.unit_cost,
+                        "expiry_day": p.expiry_day,
+                    }
+                    for p in green_pieces
+                ],
                 "started_day": self._today(),
                 "ready_day": ready_day,
             }
@@ -1044,8 +1720,8 @@ class BusinessApp:
             )
             # Distinct entry_type for intermediate production
             # consumption. NOT a sale — the green is transformed into
-            # roasted, and its WAVG cost is capitalized into the
-            # roasted output's basis at materialization. Counting it
+            # roasted, and its FIFO lot cost is capitalized into the
+            # roasted output lot at materialization. Counting it
             # under `inventory_out` would inflate COGS.
             self._record_truth(
                 self.agent_id,
@@ -1054,7 +1730,9 @@ class BusinessApp:
                 counterparty=None,
                 item=green_item_id,
                 quantity=qty_kg,
-                memo=(f"roast input consumed (WAVG ${green_unit_cost:.2f}/kg)"),
+                memo=(
+                    f"roast input consumed (FIFO lots, avg ${green_unit_cost:.2f}/kg)"
+                ),
             )
         return {
             "status": "success",
@@ -1067,12 +1745,44 @@ class BusinessApp:
             "ready_day": ready_day,
             "roasted_unit_cost_estimate": round(roasted_unit_cost, 4),
             "remaining_cash": round(self.cash, 2),
-            "remaining_green_inventory": self.inventory[green_item_id],
+            "remaining_green_inventory": self.inventory.get(green_item_id, 0),
             "shared_roast_capacity_used_today": (env._roast_used_today[self.agent_id]),
             "shared_roast_capacity_remaining_today": (
-                ROAST_DAILY_CAP_GREEN_KG - env._roast_used_today[self.agent_id]
+                roast_cap - env._roast_used_today[self.agent_id]
             ),
         }
+
+    def buy_roaster_upgrade(self) -> dict:
+        """Buy the one-time roasting capacity upgrade (roaster only; see §3).
+        Pays the capex now (booked as an operating expense); the higher daily
+        green roasting cap and inventory cap apply from the ready day on.
+        """
+        env = getattr(self, "_env", None)
+        up = (getattr(env, "mechanics", None) or {}).get("roaster_upgrade") if env else None
+        if not up:
+            return {"status": "error", "message": "No upgrade is available in this run."}
+        if self.role != "roaster":
+            return {"status": "error", "message": "Only roasters can buy the roaster upgrade."}
+        if self.agent_id in env._upgrades:
+            return {"status": "error", "message": f"Already bought (ready day {env._upgrades[self.agent_id]})."}
+        capex = float(up["capex"])
+        if self.cash < capex:
+            return {"status": "error",
+                    "message": f"Insufficient cash (${self.cash:.2f}) for the ${capex:.2f} upgrade."}
+        today = self._today()
+        ready = today + int(up["build_days"])
+        self.cash -= capex
+        env._upgrades[self.agent_id] = ready
+        if self._record_truth is not None:
+            self._record_truth(self.agent_id, "operating_expense", amount=capex, counterparty=None,
+                               memo=f"roaster upgrade capex (expensed; ready day {ready})")
+            self._record_truth(self.agent_id, "cash_out", amount=capex, counterparty=None,
+                               memo="roaster upgrade capex")
+        env._emit("roaster_upgrade_bought", day=today, agent_id=self.agent_id, capex=capex, ready_day=ready)
+        return {"status": "success", "capex": capex, "ready_day": ready,
+                "roast_cap_green_kg_from_ready_day": int(up["roast_cap_green_kg"]),
+                "inventory_cap_kg_from_ready_day": self._inventory_cap_kg() + int(up["inventory_cap_bonus_kg"]),
+                "remaining_cash": round(self.cash, 2)}
 
     # ===== TOOLS — chat =====
     def send_message(
@@ -1082,29 +1792,39 @@ class BusinessApp:
         body: str,
         ref_listing_id: str | None = None,
         ref_offer_id: str | None = None,
+        reply_to_message_id: str | None = None,
     ) -> dict:
-        """Send a private message to another agent.
+        """Send a private message to another business.
 
         Args:
-            recipient: the recipient agent's id.
-            title: REQUIRED short subject line (≤80 chars hard cap, ≤60
-                recommended). Must summarize the message intent — empty
-                or whitespace-only titles are rejected.
-            body: free-form message text.
-            ref_listing_id: optionally tag this message to a specific listing.
-            ref_offer_id: optionally tag this message to a specific offer.
+            recipient: agent id.
+            title: subject, one line, 1-80 characters.
+            body: text, at most 4,000 characters.
+            ref_listing_id: listing it refers to.
+            ref_offer_id: offer it refers to.
+            reply_to_message_id: message you answer; replies form a thread
+                (`thread_id` = id of its first message).
         """
         if not body or not body.strip():
             return {"status": "error", "message": "body cannot be empty."}
         if not isinstance(title, str) or not title.strip():
             return {
                 "status": "error",
-                "message": "title is required (short subject line, ≤60 chars recommended).",
+                "message": "title is required (subject line, 1-80 characters).",
             }
         if len(title) > 80:
             return {
                 "status": "error",
                 "message": f"title is {len(title)} chars; hard cap is 80.",
+            }
+        # v2.1: a title is shown inside the recipient's `[Wake reason: …]` line, so
+        # it must be a single plain line (no forged harness text); bodies are capped
+        # so a sender cannot flood the recipient's context.
+        title = " ".join(title.replace("[", "(").replace("]", ")").split())
+        if not isinstance(body, str) or len(body) > MAX_MESSAGE_BODY_CHARS:
+            return {
+                "status": "error",
+                "message": f"body must be text of at most {MAX_MESSAGE_BODY_CHARS} characters.",
             }
         if not isinstance(recipient, str) or not recipient.strip():
             return {"status": "error", "message": "recipient must be an agent_id."}
@@ -1129,6 +1849,40 @@ class BusinessApp:
                         f"'{allowed_recipient}', not '{recipient}'."
                     ),
                 }
+        parent = None
+        if reply_to_message_id is not None and str(reply_to_message_id).strip():
+            reply_to_message_id = str(reply_to_message_id).strip()
+            parent = self.marketplace.get_message(reply_to_message_id)
+            if parent is None or self.agent_id not in (
+                parent.sender_id,
+                parent.recipient_id,
+            ):
+                return {
+                    "status": "error",
+                    "message": (
+                        f"reply_to_message_id '{reply_to_message_id}' is not a "
+                        f"message sent to or by you."
+                    ),
+                }
+            # A reply stays between the parent's two parties (it would
+            # otherwise leak the parent's title / thread to a third agent).
+            if {self.agent_id, recipient} != {parent.sender_id, parent.recipient_id}:
+                other = (
+                    parent.recipient_id
+                    if parent.sender_id == self.agent_id
+                    else parent.sender_id
+                )
+                return {
+                    "status": "error",
+                    "message": (
+                        f"a reply to '{reply_to_message_id}' must go to the other "
+                        f"party of that message ('{other}'), not '{recipient}'. "
+                        f"Send a new message (without reply_to_message_id) to "
+                        f"write to someone else."
+                    ),
+                }
+        else:
+            reply_to_message_id = None
         env = getattr(self.marketplace, "_env", None)
         if env is not None:
             env._messages_today[self.agent_id] = (
@@ -1141,7 +1895,19 @@ class BusinessApp:
             body=body,
             ref_listing_id=ref_listing_id,
             ref_offer_id=ref_offer_id,
+            reply_to_message_id=reply_to_message_id,
         )
+        if env is not None:
+            env._emit(
+                "message_sent",
+                message_id=m.id,
+                sender=m.sender_id,
+                recipient=m.recipient_id,
+                title=m.title,
+                reply_to_message_id=m.reply_to_message_id,
+                thread_id=m.thread_id,
+                at=m.sent_at,
+            )
         # Reactive wake: pull the recipient back to current_min so the
         # next dispatcher cycle delivers a fresh observation that
         # includes this DM in the unread inbox. Without this, mid-day
@@ -1149,35 +1915,47 @@ class BusinessApp:
         if env is not None:
             from coffeebench.event_loop import WAKE_DM_RECEIVED
 
+            re_ref = (
+                f' (re: {parent.id} "{parent.title[:40]}")'
+                if parent is not None
+                else ""
+            )
             env._wake_agent_externally(
                 recipient,
-                f"{WAKE_DM_RECEIVED}: from {self.agent_id} — '{title.strip()[:60]}'",
+                f"{WAKE_DM_RECEIVED}: from {self.agent_id} — "
+                f"'{title.strip()[:60]}' [{m.id}]{re_ref}",
             )
-        return {"status": "success", "message_id": m.id, "recipient": recipient}
+        return {
+            "status": "success",
+            "message_id": m.id,
+            "recipient": recipient,
+            "thread_id": m.thread_id,
+            "reply_to_message_id": m.reply_to_message_id,
+        }
+
+    def _reply_ref(self, m) -> str | None:
+        """`re: <id> "<title>"` label for a reply (None for thread roots)."""
+        if not m.reply_to_message_id:
+            return None
+        parent = self.marketplace.get_message(m.reply_to_message_id)
+        title = parent.title if parent is not None else "?"
+        return f're: {m.reply_to_message_id} "{title}"'
 
     def view_messages(
         self,
         counterparty: str | None = None,
         since_day: int | None = None,
         limit: int = 10,
+        thread_id: str | None = None,
     ) -> dict:
-        """Return a compact INBOX of messages visible to you (sent by you
-        or sent to you), most-recent first. Each row carries the message
-        id, sender, recipient, day, and the **title** (subject line). The
-        body is NOT included in the listing view — call
-        `read_message(message_id)` to fetch the body of a specific message.
-
-        This title-only format keeps your context window small even on long
-        runs — bodies are fetched on demand only for messages you care
-        about.
+        """List your sent and received messages, newest first (titles, thread
+        and reply ids; no bodies).
 
         Args:
-            counterparty: filter to messages exchanged with one specific
-                agent (sender or recipient = this agent). Use "self" for
-                only messages YOU sent. None = all your messages in/out.
-            since_day: only messages sent on or after this day.
-            limit: max rows to return (default 10, most-recent first).
-                Increase explicitly when you need to scan further back.
+            counterparty: only messages with this agent ("self" = sent by you).
+            since_day: only from this day on.
+            limit: max rows (default 10).
+            thread_id: only this thread.
         """
         msgs = self.marketplace.messages_visible_to(
             self.agent_id,
@@ -1194,6 +1972,8 @@ class BusinessApp:
                 for m in msgs
                 if m.sender_id == counterparty or m.recipient_id == counterparty
             ]
+        if thread_id:
+            msgs = [m for m in msgs if (m.thread_id or m.id) == thread_id]
         # Newest first, capped to `limit`.
         try:
             cap = max(1, int(limit))
@@ -1222,6 +2002,8 @@ class BusinessApp:
                     "ref_listing_id": m.ref_listing_id,
                     "ref_offer_id": m.ref_offer_id,
                     "ref_deal_id": m.ref_deal_id,
+                    "thread_id": m.thread_id or m.id,
+                    "reply_to": self._reply_ref(m),
                 }
             )
         return {
@@ -1233,13 +2015,7 @@ class BusinessApp:
         }
 
     def read_message(self, message_id: str) -> dict:
-        """Fetch the full body of a single message previously seen via
-        `view_messages` (the inbox carries the id). The message must be
-        one you sent or one sent to you.
-
-        Args:
-            message_id: id from a `view_messages` inbox row.
-        """
+        """Show one message's body (marks it read)."""
         msgs = self.marketplace.messages_visible_to(self.agent_id)
         m = next((x for x in msgs if x.id == message_id), None)
         if m is None:
@@ -1257,6 +2033,15 @@ class BusinessApp:
         msg_dict = asdict(m)
         msg_dict["sent_day"] = m.sent_at // 1440
         msg_dict["sent"] = format_min(m.sent_at)
+        msg_dict["thread_id"] = m.thread_id or m.id
+        msg_dict["reply_to"] = self._reply_ref(m)
+        # Later messages in the same thread (visible to you), so you can
+        # see whether this message was already answered.
+        msg_dict["replies"] = [
+            {"id": x.id, "sender": x.sender_id, "title": x.title}
+            for x in msgs
+            if x.reply_to_message_id == m.id
+        ]
         return {"status": "success", "message": msg_dict}
 
     # ===== TOOLS — books / cash =====
@@ -1362,17 +2147,13 @@ class BusinessApp:
         counterparty: str | None = None,
         limit: int = 20,
     ) -> dict:
-        """List your unpaid supplier/peer invoices (AP) with a summary
-        header. Compact one-row-per-invoice — drops the verbose dataclass
-        dump. Sorted by due day ascending (most urgent first).
+        """List your unpaid invoices as buyer (AP), soonest due first, with
+        totals.
 
         Args:
-            only_overdue: if True, return only invoices already past
-                their due_date.
-            counterparty: filter to invoices from one specific seller
-                (issuer agent_id).
-            limit: max rows to return (default 20). The summary block
-                still reports the FULL counts/totals regardless of limit.
+            only_overdue: only overdue invoices.
+            counterparty: only this seller.
+            limit: max rows (default 20).
         """
         return self._ap_ar_view(
             self.accounts_payable,
@@ -1387,17 +2168,13 @@ class BusinessApp:
         counterparty: str | None = None,
         limit: int = 20,
     ) -> dict:
-        """List your unpaid customer/peer invoices (AR) with a summary
-        header. Compact one-row-per-invoice — drops the verbose dataclass
-        dump. Sorted by due day ascending (most urgent first).
+        """List your unpaid invoices as seller (AR), soonest due first, with
+        totals.
 
         Args:
-            only_overdue: if True, return only invoices already past
-                their due_date.
-            counterparty: filter to invoices from one specific buyer
-                (payer agent_id).
-            limit: max rows to return (default 20). The summary block
-                still reports the FULL counts/totals regardless of limit.
+            only_overdue: only overdue invoices.
+            counterparty: only this buyer.
+            limit: max rows (default 20).
         """
         return self._ap_ar_view(
             self.accounts_receivable,
@@ -1407,10 +2184,8 @@ class BusinessApp:
         )
 
     def pay_invoice(self, invoice_id: str) -> dict:
-        """Pay one of your AP invoices in full from cash. Cash is wired to the issuer.
-
-        Args:
-            invoice_id: AP invoice id.
+        """Pay an AP invoice in full (principal net of return credits, plus
+        late fees).
         """
         # Hold the marketplace lock for the whole AP→AR cash transfer so a
         # concurrent agent thread can't double-spend cash or read mid-state.
@@ -1487,45 +2262,12 @@ class BusinessApp:
             }
 
     def view_trial_balance(self, period: str = "current") -> dict:
-        """Period trial balance — chart-of-accounts balances over the
-        period as a flat dict (NO IS/BS/CF subtotals computed for you).
-        Useful for self-monitoring your own NI components day-to-day.
+        """Show your ledger accounts, from which the score is computed
+        (balances as of today; revenue, cost and cash flows summed over the period).
 
-        Each account record carries:
-          - balance : float, rounded to 2 decimals
-          - kind    : "snapshot" → point-in-time figure at the period's
-                      `as_of` day (Balance Sheet style)
-                      "period"   → sum over [day_lo .. day_hi]
-                                   (Income Statement / cash-flow style)
-
-        Account list (chart of accounts):
-          Snapshot (Balance Sheet at `as_of`):
-            cash, accounts_receivable, inventory, accounts_payable
-          Period (Income Statement):
-            sales_revenue, sales_returns, cogs,
-            rent_utilities_expense, spoilage_expense,
-            other_operating_expense,
-            interest_expense, interest_revenue
-          Period (Cash flow inputs):
-            cash_received, cash_paid, cash_paid_for_production
-
-        Use it to inspect the env's truth ledger as it has been
-        compiled so far for the period — the same data the env uses
-        to compute your end-of-run score.
-
-        `period` values:
-            "Q1" / "Q2" / "Q3" / "Q4" — full quarter window.
-            "FY"                      — full year (days 0..364).
-            "YTD"                     — year-to-date (days 0..today).
-            "current"                 — today's quarter (default).
-
-        Mid-period queries (e.g. "Q1" on day 30) cap at today and return
-        partial accumulation; `complete: false` flags this. Asking for a
-        future period (e.g. "Q3" on day 50) returns an error.
-
-        For per-record drill-down (e.g. "which sale_revenue events
-        composed Q1's revenue?"), use `view_econ_events` with explicit
-        filter args.
+        Args:
+            period: "FY" (whole run so far), "YTD" or "current" (day 0 to today;
+                default).
         """
         env = getattr(self.marketplace, "_env", None)
         if env is None:
@@ -1537,17 +2279,7 @@ class BusinessApp:
         return {"status": "success", **tb}
 
     def wait_for_next_day(self) -> dict:
-        """Signal you have nothing more to do right now and want to
-        sleep until something happens for you.
-
-        You will be woken automatically when an external event lands
-        for you within today's business hours: a new direct message
-        arrives, a counterparty accepts one of your offers, a shipment
-        you are expecting is delivered, or your in-flight production
-        completes. If no event fires for you, you stay asleep until
-        tomorrow's morning observation. This is the cost-efficient way
-        to end your turn — you spend zero LLM calls while sleeping.
-        """
+        """End your day (see §9)."""
         return {
             "status": "success",
             "message": "Sleeping until next event or tomorrow's morning.",

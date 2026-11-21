@@ -1,0 +1,40 @@
+# Background job: one model × the 5 non-focal tasks. Rendered by harbor_adapter/launch_sim.py
+# (python string.Template placeholders; a doubled dollar sign = literal dollar).
+jobs_dir: $jobs_dir
+job_name: $job_name
+n_attempts: 1
+n_concurrent_trials: $n_concurrent
+quiet: true
+environment:
+  type: docker
+  force_build: false
+  delete: true
+# BEGIN agent
+agents:
+  - import_path: $import_path
+    model_name: $model_name
+    kwargs:
+      temperature: null            # API default (no sampling override)
+      record_terminal_session: false
+      # Uniform 1M context budget for every model (user, 2026-10-21; every official endpoint
+      # offers >= 1,000,000 tokens).
+      model_info: {max_input_tokens: 1000000, max_output_tokens: 32768}
+      # Compact at 85% of the budget (summarize when < 150K tokens are free), counted in the
+      # model's own tokens (CoffeeTerminus calibrates litellm's estimate on reported usage).
+      proactive_summarization_threshold: 150000
+      # Reasoning effort only via extra_body (focal: model max; bg: API default); no reasoning replay
+      # (interleaved_thinking defaults to false).
+      llm_call_kwargs:
+        max_tokens: 32768
+        timeout: 900
+        num_retries: 2
+        # Provider pin (+ focal reasoning effort, see launch_sim.FOCAL_EFFORT).
+        extra_body: $extra_body
+      # Action format: json = terminus-2 (default); mini_swe = mini-swe-agent (THOUGHT + one bash block).
+      parser_name: $parser_name
+      coffee_timeout_sec: 7200
+      max_output_bytes: 100000
+# END agent
+datasets:
+  - path: $dataset
+    task_names: [$task_names]
